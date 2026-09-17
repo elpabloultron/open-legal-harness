@@ -242,6 +242,41 @@ def cmd_auditoria(args) -> None:
     )
 
 
+def cmd_usuario_clave(args) -> None:
+    """Fija la contraseña de un usuario. Se pide dos veces y nunca se escribe en la línea de comandos."""
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = db.uno(
+        "SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (estudio_id, args.email.lower())
+    )
+    if not usuario:
+        salida_error(f"no existe el usuario {args.email} en el estudio {estudio_id}")
+    primera = getpass.getpass("nueva contrasena: ")
+    segunda = getpass.getpass("repetir contrasena: ")
+    if primera != segunda:
+        salida_error("las contrasenas no coinciden")
+    if len(primera) < 10:
+        salida_error("usa al menos 10 caracteres (los datos son de clientes)")
+    db.ejecutar("UPDATE usuarios SET password_hash = ? WHERE id = ?", (auth.hash_password(primera), usuario["id"]))
+    auth.auditar(db, estudio_id, usuario["id"], "usuario.clave", "usuarios", usuario["id"])
+    print(f"contrasena actualizada para {args.email} ({usuario['rol']})")
+
+
+def cmd_usuario_desactivar(args) -> None:
+    """Corta el acceso sin borrar el historial: la causa sigue mostrando quién la llevaba."""
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = db.uno(
+        "SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (estudio_id, args.email.lower())
+    )
+    if not usuario:
+        salida_error(f"no existe el usuario {args.email} en el estudio {estudio_id}")
+    db.ejecutar("UPDATE usuarios SET activo = 0 WHERE id = ?", (usuario["id"],))
+    db.ejecutar("DELETE FROM sesiones WHERE usuario_id = ?", (usuario["id"],))
+    auth.auditar(db, estudio_id, usuario["id"], "usuario.desactivar", "usuarios", usuario["id"])
+    print(f"acceso revocado a {args.email}")
+
+
 def cmd_audiencia_crear(args) -> None:
     db = _ctx(args)
     estudio_id = _estudio_actual(db, args.estudio)
@@ -298,6 +333,14 @@ def construir_parser() -> argparse.ArgumentParser:
     pu = sub_u.add_parser("listar")
     pu.add_argument("--estudio", type=int)
     pu.set_defaults(func=cmd_usuario_listar)
+    pu = sub_u.add_parser("clave", help="fija la contrasena de un usuario (se pide por teclado)")
+    pu.add_argument("--email", required=True)
+    pu.add_argument("--estudio", type=int)
+    pu.set_defaults(func=cmd_usuario_clave)
+    pu = sub_u.add_parser("desactivar", help="revoca el acceso de un usuario")
+    pu.add_argument("--email", required=True)
+    pu.add_argument("--estudio", type=int)
+    pu.set_defaults(func=cmd_usuario_desactivar)
 
     p = sub.add_parser("cliente", help="clientes")
     sub_c = p.add_subparsers(dest="accion", required=True)

@@ -29,6 +29,13 @@ body {
 }
 .marca { font-weight: 600; }
 .estudio { color: var(--tinta-suave); font-size: 11px; text-align: right; }
+.sesion {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 12px 6px;
+}
 .pestanas {
   display: flex;
   gap: 4px;

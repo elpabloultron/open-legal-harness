@@ -50,7 +50,9 @@ class TestPanelWeb(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_token_obligatorio(self):
-        self.assertEqual(self.cliente.get("/").status_code, 401)
+        # El HTML se sirve siempre —no lleva datos— para que un usuario pueda entrar
+        # con su correo; los datos sí exigen token o sesión.
+        self.assertEqual(self.cliente.get("/").status_code, 200)
         self.assertEqual(self.cliente.get("/api/causas").status_code, 401)
         self.assertEqual(self.cliente.get("/api/causas", headers={"X-OpenLegal-Token": "malo"}).status_code, 401)
 

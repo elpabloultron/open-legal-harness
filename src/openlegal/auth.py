@@ -17,7 +17,7 @@ import secrets
 
 from .db import DB
 
-ROLES = ("socio", "abogado", "paralegal", "administrativo", "cliente")
+ROLES = ("socio", "administrador", "abogado", "paralegal", "administrativo", "cliente")
 
 # Permisos por rol. `todas` significa "todas las causas del estudio";
 # sin `todas`, solo las causas en las que el usuario esta en causa_equipo.
@@ -29,6 +29,14 @@ PERMISOS: dict[str, set[str]] = {
         "documento.publicar", "honorario.leer", "honorario.editar", "gasto.leer",
         "gasto.editar", "usuario.gestionar", "auditoria.leer", "reporte.panel",
         "honorario.leer.todos",
+    },
+    # Administrador del sistema: gestiona usuarios y ve todo el estudio para
+    # operar el CRM (agenda, plazos, clientes), pero no toca la redacción ni las
+    # finanzas. La secretaria que además factura es rol `administrativo`.
+    "administrador": {
+        "causa.leer", "causa.leer.todas", "causa.crear", "causa.asignar", "cliente.leer",
+        "cliente.editar", "plazo.leer", "plazo.crear", "audiencia.leer", "audiencia.crear",
+        "documento.leer", "usuario.gestionar", "auditoria.leer", "reporte.panel",
     },
     "abogado": {
         "causa.leer", "causa.crear", "causa.editar", "cliente.leer", "cliente.editar",
@@ -132,6 +140,11 @@ def usuario_por_token(db: DB, token: str) -> dict | None:
     if fila:
         fila.pop("password_hash", None)
     return fila
+
+
+def cerrar_sesion(db: DB, token: str) -> None:
+    """Invalida el token: lo borra de la tabla de sesiones."""
+    db.ejecutar("DELETE FROM sesiones WHERE token = ?", (token,))
 
 
 # ------------------------------------------------------------------ permisos

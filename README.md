@@ -142,13 +142,41 @@ AVISO: los feriados de 2026 estan marcados como PENDIENTES DE VALIDACION
 VENCE: 2026-09-29
 ```
 
-## Roles
+## Usuarios, roles y entrada al panel
 
-`socio`, `abogado`, `paralegal`, `administrativo`, `cliente`. La regla dura:
-**sólo el socio ve todas las causas del estudio**; abogados y paralegales ven
-únicamente las causas donde están asignados; el administrativo ve todo para
-facturar pero no redacta ni accede a documentos; el cliente ve su causa y sólo lo
-marcado como visible. Detalle en [docs/matriz_permisos.md](docs/matriz_permisos.md).
+Roles: `socio` (dueño, ve todo incluida la rentabilidad), `administrador` (gestiona
+usuarios y ve todo el estudio para operar el CRM, pero **no** toca honorarios ni
+redacción), `abogado`, `paralegal`, `administrativo` (secretaría: factura y agenda) y
+`cliente`. La regla dura: **sólo el socio y el administrador ven todas las causas del
+estudio**; abogados y paralegales ven únicamente las causas donde están asignados.
+Detalle en [docs/matriz_permisos.md](docs/matriz_permisos.md).
+
+Dos formas de entrar al panel:
+
+1. **Sesión de usuario** (oficina): correo y contraseña. Cada quien ve lo suyo y todo
+   queda firmado en la bitácora.
+2. **Token del panel** (abogado solo): la URL que imprime `openlegal serve` abre el
+   panel como usuario responsable, sin login.
+
+```bash
+# las contraseñas se piden por teclado, nunca por línea de comandos ni por chat
+openlegal --db "$DB" usuario clave --email admin@estudio.cl
+openlegal --db "$DB" usuario desactivar --email luis@estudio.cl   # corta el acceso sin borrar historial
+```
+
+## Demostración local (SQLite, sin Docker)
+
+```bash
+bash scripts/demo_local.sh --servir   # estudio demo: admin, secretaría y dos abogados
+```
+
+## Protección de datos y modo local
+
+Todo corre en la máquina del estudio: la base vive en el disco, el panel escucha sólo
+en `127.0.0.1` y no hace ni una petición externa. El mapa completo de obligaciones, la
+base de licitud para causas (art. 13 letra e) y —lo más importante— el punto donde la
+IA sí puede sacar datos fuera del estudio están en
+[docs/proteccion_datos.md](docs/proteccion_datos.md).
 
 ## Privacidad y secreto profesional
 

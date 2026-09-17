@@ -159,14 +159,79 @@ async function guardarPlazo(evento) {
   }
 }
 
+function vistaLogin(mensaje) {
+  document.getElementById("pestanas").style.display = "none";
+  document.getElementById("sesion").innerHTML = "";
+  document.getElementById("vista").innerHTML = `
+    <form id="form-login" class="tarjeta" style="margin-top:14px">
+      <h3>Entrar al CRM</h3>
+      <p class="meta">${escapar(mensaje || "Usa tu correo del estudio y tu contraseña.")}</p>
+      <label>Correo<input name="email" type="email" required autocomplete="username" /></label>
+      <label>Contraseña<input name="password" type="password" required autocomplete="current-password" /></label>
+      <button class="accion" type="submit">Entrar</button>
+      <p class="meta" style="margin:8px 0 0">
+        Si trabajas solo, no necesitas contraseña: abre el panel con la URL que imprime
+        «openlegal serve» (esa trae el token).
+      </p>
+    </form>`;
+  document.getElementById("form-login").addEventListener("submit", async (evento) => {
+    evento.preventDefault();
+    const datos = Object.fromEntries(new FormData(evento.target).entries());
+    try {
+      const respuesta = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(datos),
+      });
+      if (!respuesta.ok) {
+        const detalle = await respuesta.json().catch(() => ({}));
+        throw new Error(detalle.detail || "no se pudo entrar");
+      }
+      location.reload();
+    } catch (error) {
+      document.getElementById("vista").querySelector(".meta").textContent = `No se pudo entrar: ${error.message}`;
+    }
+  });
+}
+
+function pintarSesion(info) {
+  const caja = document.getElementById("sesion");
+  const quien = info.usuario ? `${info.usuario.nombre} · ${info.usuario.rol}` : "modo token (abogado solo)";
+  const salir = info.via === "sesion"
+    ? '<button class="accion" id="salir">salir</button>'
+    : "";
+  caja.innerHTML = `<span class="meta">${escapar(quien)}</span> ${salir}`;
+  const boton = document.getElementById("salir");
+  if (boton) {
+    boton.addEventListener("click", async () => {
+      await fetch("/api/logout", { method: "POST" });
+      location.reload();
+    });
+  }
+}
+
 async function inicio() {
+  let info = null;
   try {
-    const info = await pedir("/api/estado");
-    document.getElementById("estudio").textContent = `${info.estudio.nombre} · ${info.usuario.nombre} (${info.usuario.rol})`;
-    document.getElementById("pie").textContent =
-      `Open Legal CRM v${info.version} · ${info.motores} · ${info.conteos.causas} causas, ${info.conteos.plazos} plazos`;
+    const respuesta = await fetch("/api/sesion", { credentials: "same-origin" });
+    if (respuesta.status === 401) {
+      vistaLogin();
+      return;
+    }
+    info = await respuesta.json();
   } catch (error) {
     document.getElementById("estudio").textContent = "sin conexión con la API";
+    return;
+  }
+  document.getElementById("pestanas").style.display = "";
+  document.getElementById("estudio").textContent = `${info.estudio.nombre} · ${info.estudio.modo}`;
+  pintarSesion(info);
+  try {
+    const estado = await pedir("/api/estado");
+    document.getElementById("pie").textContent =
+      `Open Legal CRM v${estado.version} · ${estado.motores} · ${estado.conteos.causas} causas, ${estado.conteos.plazos} plazos`;
+  } catch (error) {
+    document.getElementById("pie").textContent = "";
   }
   pintar("vencimientos");
 }
