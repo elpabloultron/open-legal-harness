@@ -39,10 +39,13 @@ openlegal panel
 openlegal auditoria
 ```
 
-Base de datos explícita (por ejemplo, un Postgres de oficina):
+Base de datos explícita (por ejemplo, el Postgres de oficina del
+`docker-compose.yml`, que por defecto publica el puerto **55432** para no chocar
+con un 5432 ya ocupado):
 
 ```bash
-openlegal --db postgresql://legal:clave@localhost:5432/estudio init
+docker compose up -d
+openlegal --db postgresql://legal:CAMBIAR_CLAVE@localhost:55432/estudio init
 ```
 
 ## Cómputo de plazos (Art. 66 CPC)

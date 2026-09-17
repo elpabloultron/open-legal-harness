@@ -1,6 +1,8 @@
 # Modo oficina: PostgreSQL para el Harness Legal.
 # Levantar:  docker compose up -d
-# Cadena:    postgresql://legal:CAMBIAR_CLAVE@localhost:5432/estudio
+# Cadena:    postgresql://legal:CAMBIAR_CLAVE@localhost:55432/estudio
+# El puerto del host es configurable con OPENLEGAL_PG_PORT (por defecto 55432,
+# elegido para no chocar con el 5432 que suele estar tomado en la maquina).
 services:
   postgres:
     image: postgres:16-alpine
@@ -11,7 +13,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CAMBIAR_CLAVE}
       POSTGRES_DB: ${POSTGRES_DB:-estudio}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${OPENLEGAL_PG_PORT:-55432}:5432"
     volumes:
       - openlegal_pgdata:/var/lib/postgresql/data
     healthcheck:

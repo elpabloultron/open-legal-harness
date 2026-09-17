@@ -87,7 +87,9 @@ class DB:
             sql += " RETURNING id"
         cur = self.ejecutar(sql, tuple(datos.values()))
         if self.dialecto == "postgres":
-            return int(cur.fetchone()[0])
+            # El cursor usa dict_row: el ID vuelve como {'id': N}, no como tupla.
+            fila = cur.fetchone()
+            return int(fila["id"] if isinstance(fila, dict) else fila[0])
         return int(cur.lastrowid)
 
     # --------------------------------------------------------------- migracion
