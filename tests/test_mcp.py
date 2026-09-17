@@ -247,5 +247,81 @@ class TestServidorRealPorStdio(BaseMCP):
             proceso.wait(timeout=10)
 
 
+class TestRectificarPlazo(BaseMCP):
+    """Lo que destapó la prueba real: el agente quedó con un plazo cargado con el OCR
+    equivocado y no tenía ninguna herramienta para corregirlo. Ahora tiene dos, y
+    ninguna borra el rastro (un plazo fatal rectificado tiene que ser explicable).
+    """
+
+    def test_actualizar_recalcula_y_audita_el_motivo(self):
+        creado, error = self.llamar(
+            "crm_plazo_crear", causa_id=self.causa, descripcion="Contestar demanda",
+            dias=8, notificacion="2026-09-17",
+        )
+        self.assertFalse(error)
+        self.assertEqual(creado["fecha_vencimiento"], "2026-09-29")
+        plazo_id = creado["plazo_id"]
+
+        actualizado, error = self.llamar(
+            "crm_plazo_actualizar", plazo_id=plazo_id, dias=10,
+            motivo="el proveído confiere traslado de diez días hábiles, no ocho",
+        )
+        self.assertFalse(error)
+        self.assertEqual(actualizado["fecha_vencimiento"], "2026-10-01")
+        self.assertIn("dias", actualizado["campos_actualizados"])
+        self.assertTrue(any("feriado" in str(d).lower() for d in actualizado["detalle"]))
+
+        fila = self.db.uno("SELECT dias, fecha_vencimiento FROM plazos WHERE id = ?", (plazo_id,))
+        self.assertEqual((fila["dias"], fila["fecha_vencimiento"]), (10, "2026-10-01"))
+
+        evento = self.db.uno(
+            "SELECT accion, detalle FROM auditoria WHERE entidad = 'plazos' AND entidad_id = ? "
+            "ORDER BY id DESC",
+            (plazo_id,),
+        )
+        self.assertEqual(evento["accion"], "plazo.editar")
+        self.assertIn("diez días", evento["detalle"])
+
+    def test_cancelar_no_borra_la_fila(self):
+        creado, _ = self.llamar(
+            "crm_plazo_crear", causa_id=self.causa, descripcion="Plazo duplicado",
+            dias=8, notificacion="2026-09-17",
+        )
+        cancelado, error = self.llamar(
+            "crm_plazo_cancelar", plazo_id=creado["plazo_id"], motivo="duplicado del plazo 1"
+        )
+        self.assertFalse(error)
+        self.assertTrue(cancelado["ok"])
+        fila = self.db.uno("SELECT estado FROM plazos WHERE id = ?", (creado["plazo_id"],))
+        self.assertEqual(fila["estado"], "cancelado")
+
+    def test_un_rol_sin_permiso_no_puede_rectificar(self):
+        creado, _ = self.llamar(
+            "crm_plazo_crear", causa_id=self.causa, descripcion="Contestar demanda",
+            dias=8, notificacion="2026-09-17",
+        )
+        secretaria_id = auth.crear_usuario(
+            self.db, self.estudio, "Carmen Díaz", "carmen@mcp.cl", "administrativo", "clave"
+        )
+        service.asignar(self.db, self.socio, self.causa, secretaria_id, "paralegal")
+        ctx_secretaria = Contexto(self.url, "carmen@mcp.cl")
+        solicitud = {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {
+                "name": "crm_plazo_cancelar",
+                "arguments": {"plazo_id": creado["plazo_id"], "motivo": "no me corresponde"},
+            },
+        }
+        respuesta = responder(solicitud, ctx_secretaria)
+        self.assertTrue(respuesta["result"]["isError"])
+        fila = self.db.uno("SELECT estado FROM plazos WHERE id = ?", (creado["plazo_id"],))
+        self.assertEqual(fila["estado"], "pendiente")
+
+    def test_las_herramientas_nuevas_se_anuncian_al_agente(self):
+        nombres = {h["name"] for h in HERRAMIENTAS}
+        self.assertIn("crm_plazo_actualizar", nombres)
+        self.assertIn("crm_plazo_cancelar", nombres)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -158,6 +158,77 @@ def marcar_cumplido(db: DB, usuario: dict, plazo_id: int) -> None:
     auth.auditar(db, usuario["estudio_id"], usuario["id"], "plazo.cumplido", "plazos", plazo_id)
 
 
+def actualizar_plazo(
+    db: DB,
+    usuario: dict,
+    plazo_id: int,
+    descripcion: str | None = None,
+    dias: int | None = None,
+    fecha_notificacion: str | None = None,
+    es_fatal: bool | None = None,
+    motivo: str | None = None,
+) -> dict:
+    """Corrige un plazo y recalcula su vencimiento con el Art. 66 CPC.
+
+    El motivo es obligatorio en la practica: queda en la bitacora junto a los
+    campos que cambiaron, para que un plazo fatal rectificado sea explicable
+    despues (quien lo cambio, cuando y por que).
+    """
+    plazo = db.uno("SELECT * FROM plazos WHERE id = ?", (plazo_id,))
+    if not plazo:
+        raise ValueError(f"plazo {plazo_id} no existe")
+    auth.exigir(db, usuario, "plazo.editar", plazo["causa_id"])
+
+    campos: dict = {}
+    if descripcion is not None:
+        campos["descripcion"] = descripcion
+    if es_fatal is not None:
+        campos["es_fatal"] = 1 if es_fatal else 0
+    if dias is not None:
+        campos["dias"] = dias
+    if fecha_notificacion is not None:
+        campos["fecha_notificacion"] = fecha_notificacion
+    if not campos:
+        raise ValueError("no se indico ningun campo que actualizar")
+
+    calculo = None
+    nuevos_dias = campos.get("dias", plazo["dias"])
+    nueva_notificacion = campos.get("fecha_notificacion", plazo["fecha_notificacion"])
+    if nuevos_dias and nueva_notificacion:
+        calculo = plazos.vencimiento(dt.date.fromisoformat(nueva_notificacion), int(nuevos_dias))
+        campos["fecha_vencimiento"] = calculo["fecha_vencimiento"]
+
+    asignaciones = ", ".join(f"{col} = ?" for col in campos)
+    db.ejecutar(f"UPDATE plazos SET {asignaciones} WHERE id = ?", (*campos.values(), plazo_id))
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], "plazo.editar", "plazos", plazo_id,
+        f"motivo: {motivo or 'no indicado'} | campos: {sorted(campos)}",
+    )
+    return {
+        "id": plazo_id,
+        "campos_actualizados": sorted(campos),
+        "fecha_vencimiento": campos.get("fecha_vencimiento", plazo["fecha_vencimiento"]),
+        "calculo": calculo,
+    }
+
+
+def cancelar_plazo(db: DB, usuario: dict, plazo_id: int, motivo: str) -> None:
+    """Deja un plazo sin efecto sin borrarlo.
+
+    No se elimina la fila a proposito: un plazo fatal que se creo mal y despues
+    se corrige tiene que quedar rastro, o el expediente no es auditable.
+    """
+    plazo = db.uno("SELECT * FROM plazos WHERE id = ?", (plazo_id,))
+    if not plazo:
+        raise ValueError(f"plazo {plazo_id} no existe")
+    auth.exigir(db, usuario, "plazo.editar", plazo["causa_id"])
+    db.ejecutar("UPDATE plazos SET estado = 'cancelado' WHERE id = ?", (plazo_id,))
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], "plazo.cancelar", "plazos", plazo_id,
+        f"motivo: {motivo}",
+    )
+
+
 # ----------------------------------------------------------------- audiencias
 def crear_audiencia(
     db: DB, usuario: dict, causa_id: int, tipo: str, fecha: str, hora: str | None = None, **extra

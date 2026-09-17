@@ -32,6 +32,23 @@ herramienta**.
 5. **Propone y confirma.** Crea los plazos y audiencias, pero cierra siempre con un resumen para
    que el abogado firme: qué se creó, con qué fundamento (fecha de notificación + días + detalle)
    y qué quedó dudoso. La responsabilidad de la fecha es del abogado.
+6. **Rectifica, no dupliques.** Si un plazo ya cargado está mal, **no crees otro encima**: usa
+   `mcp__crm__crm_plazo_actualizar` (corrige y recalcula) o `mcp__crm__crm_plazo_cancelar` con el
+   `motivo`. Dos plazos fatales incompatibles en la misma causa es peor que uno equivocado, porque
+   el abogado ya no sabe cuál seguir. El motivo queda en la bitácora: escríbelo como se lo
+   explicarías a un tercero.
+7. **Antes de culpar a un plazo, mira su `creado_en`.** `crm_plazo_listar` devuelve `creado_en`,
+   `estado` y `responsable_id`. Un plazo anterior al inicio de tu sesión lo creó otra persona (o
+   una carga de datos): no lo atribuyas al documento que estás leyendo. Si la coincidencia entre
+   un plazo viejo y un error de lectura te parece sospechosa, es una hipótesis, no un hecho:
+   preséntala como hipótesis.
+8. **Verifica que la resolución sea coherente con el procedimiento.** Si el proveído ordena algo
+   que no calza con la materia (por ejemplo, un traslado de días hábiles al estilo civil en un
+   procedimiento laboral, donde la contestación se rige por los arts. 451 y 452 del Código del
+   Trabajo), **no lo cargues en silencio**: crea el plazo si el documento lo manda, y advierte la
+   anomalía aparte, indicando qué norma habría que aplicar. Antes de eso, contrasta con
+   `mcp__open_legal_chile__bcn_get_codigo`. Igual con las audiencias: si la resolución no fija
+   ninguna, no inventes fecha — pregunta si falta un escrito en el expediente.
 
 ## Pasos
 
@@ -65,8 +82,12 @@ herramienta**.
 
 ## Lo que NO debes hacer
 
-- No inventar la fecha de notificación ni el Rol/RIT.
+- No inventar la fecha de notificación ni el Rol/RIT. Si el proveído dice «contado desde la
+  notificación» y la cédula no está en el expediente, usa la fecha del proveído como ancla
+  **provisional** y dilo tal cual.
 - No crear plazos fatales «por si acaso»: un plazo fatal de más también hace daño.
+- No crear un plazo nuevo encima de uno mal cargado, ni borrar el que estaba: se rectifica o se
+  cancela, y siempre con motivo.
 - No mandar el expediente completo si basta el texto minimizado.
 - No usar terminología de common law (discovery, at-will, punitive damages): es derecho chileno.
 - No cerrar la tarea sin dejar el resumen para la revisión del abogado.

@@ -145,7 +145,12 @@ HERRAMIENTAS: list[dict[str, Any]] = [
     },
     {
         "name": "crm_plazo_listar",
-        "description": "Lista los próximos vencimientos (por defecto 30 días) de las causas visibles.",
+        "description": (
+            "Lista los próximos vencimientos (por defecto 30 días) de las causas visibles. "
+            "Cada plazo viene con su `creado_en`, `estado` y `responsable_id`: revisa `creado_en` "
+            "antes de concluir que un plazo es erróneo, porque un plazo anterior a tu sesión lo "
+            "creó otro usuario (o una carga de datos), no el documento que estás leyendo."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -153,6 +158,41 @@ HERRAMIENTAS: list[dict[str, Any]] = [
                 "desde": {"type": "string", "description": "YYYY-MM-DD"},
                 "causa_id": {"type": "integer"},
             },
+        },
+    },
+    {
+        "name": "crm_plazo_actualizar",
+        "description": (
+            "Corrige un plazo existente (descripción, días, fecha de notificación, si es fatal) y "
+            "recalcula su vencimiento con el Art. 66 CPC. Úsalo cuando detectes un plazo mal "
+            "cargado en vez de crear uno nuevo encima. El motivo queda en la bitácora."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "plazo_id": {"type": "integer"},
+                "descripcion": {"type": "string"},
+                "dias": {"type": "integer"},
+                "notificacion": {"type": "string", "description": "YYYY-MM-DD"},
+                "es_fatal": {"type": "boolean"},
+                "motivo": {"type": "string", "description": "Por qué se corrige (queda auditado)"},
+            },
+            "required": ["plazo_id", "motivo"],
+        },
+    },
+    {
+        "name": "crm_plazo_cancelar",
+        "description": (
+            "Deja un plazo sin efecto sin borrarlo: la fila y el motivo quedan en la bitácora, "
+            "porque un plazo fatal rectificado tiene que ser explicable después."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "plazo_id": {"type": "integer"},
+                "motivo": {"type": "string"},
+            },
+            "required": ["plazo_id", "motivo"],
         },
     },
     {
@@ -350,6 +390,30 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
 
     if nombre == "crm_plazo_cumplido":
         service.marcar_cumplido(db, usuario, int(argumentos["plazo_id"]))
+        return {"ok": True, "plazo_id": int(argumentos["plazo_id"])}
+
+    if nombre == "crm_plazo_actualizar":
+        resultado = service.actualizar_plazo(
+            db, usuario, int(argumentos["plazo_id"]),
+            descripcion=argumentos.get("descripcion"),
+            dias=int(argumentos["dias"]) if argumentos.get("dias") is not None else None,
+            fecha_notificacion=argumentos.get("notificacion"),
+            es_fatal=argumentos.get("es_fatal"),
+            motivo=argumentos.get("motivo"),
+        )
+        calculo = resultado.get("calculo") or {}
+        return {
+            "plazo_id": resultado["id"],
+            "campos_actualizados": resultado["campos_actualizados"],
+            "fecha_vencimiento": resultado["fecha_vencimiento"],
+            "detalle": calculo.get("detalle", []),
+            "advertencias": calculo.get("advertencias", []),
+        }
+
+    if nombre == "crm_plazo_cancelar":
+        service.cancelar_plazo(
+            db, usuario, int(argumentos["plazo_id"]), str(argumentos["motivo"])
+        )
         return {"ok": True, "plazo_id": int(argumentos["plazo_id"])}
 
     if nombre == "crm_audiencia_crear":

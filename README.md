@@ -127,10 +127,16 @@ el perfil se crea desde la plantilla oficial:
 ## MCP: el agente escribe en el CRM
 
 `openlegal mcp` expone el CRM como servidor MCP (JSON-RPC 2.0 sobre stdio, mismo patrón
-que `open-legal-chile`), con 13 herramientas: `crm_causa_buscar`, `crm_causa_leer`,
+que `open-legal-chile`), con 14 herramientas: `crm_causa_buscar`, `crm_causa_leer`,
 `crm_plazo_calcular`, `crm_plazo_crear`, `crm_plazo_listar`, `crm_plazo_cumplido`,
-`crm_audiencia_crear`, `crm_documento_registrar`, `crm_ia_estado`, `crm_ia_redactar`,
-`crm_ia_registrar`, `crm_estudio` y `crm_causa_leer`.
+`crm_plazo_actualizar`, `crm_plazo_cancelar`, `crm_audiencia_crear`,
+`crm_documento_registrar`, `crm_ia_estado`, `crm_ia_redactar`, `crm_ia_registrar` y
+`crm_estudio`.
+
+`crm_plazo_actualizar` y `crm_plazo_cancelar` nacieron de la primera prueba con un
+expediente real: el agente detectó un plazo mal cargado y no tenía cómo corregirlo. No
+borran la fila —dejan el motivo en la bitácora—, porque un plazo fatal rectificado tiene
+que ser explicable después.
 
 Con eso el flujo completo queda: **causa.pdf → análisis con las 64 herramientas de
 open-legal-chile → plazos, audiencias y documentos escritos en el CRM**, todo desde el

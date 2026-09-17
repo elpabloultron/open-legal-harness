@@ -24,7 +24,7 @@ ROLES = ("socio", "administrador", "abogado", "paralegal", "administrativo", "cl
 PERMISOS: dict[str, set[str]] = {
     "socio": {
         "causa.leer.todas", "causa.crear", "causa.editar", "causa.asignar",
-        "cliente.leer", "cliente.editar", "plazo.leer", "plazo.crear", "plazo.cerrar",
+        "cliente.leer", "cliente.editar", "plazo.leer", "plazo.crear", "plazo.cerrar", "plazo.editar",
         "audiencia.leer", "audiencia.crear", "documento.leer", "documento.crear",
         "documento.publicar", "honorario.leer", "honorario.editar", "gasto.leer",
         "gasto.editar", "usuario.gestionar", "auditoria.leer", "reporte.panel",
@@ -35,17 +35,17 @@ PERMISOS: dict[str, set[str]] = {
     # finanzas. La secretaria que además factura es rol `administrativo`.
     "administrador": {
         "causa.leer", "causa.leer.todas", "causa.crear", "causa.asignar", "cliente.leer",
-        "cliente.editar", "plazo.leer", "plazo.crear", "audiencia.leer", "audiencia.crear",
+        "cliente.editar", "plazo.leer", "plazo.crear", "plazo.editar", "audiencia.leer", "audiencia.crear",
         "documento.leer", "usuario.gestionar", "auditoria.leer", "reporte.panel",
     },
     "abogado": {
         "causa.leer", "causa.crear", "causa.editar", "cliente.leer", "cliente.editar",
-        "plazo.leer", "plazo.crear", "plazo.cerrar", "audiencia.leer", "audiencia.crear",
+        "plazo.leer", "plazo.crear", "plazo.cerrar", "plazo.editar", "audiencia.leer", "audiencia.crear",
         "documento.leer", "documento.crear", "documento.publicar", "gasto.leer",
         "honorario.leer", "reporte.panel", "ia.autorizar", "ia.enviar", "ia.leer",
     },
     "paralegal": {
-        "causa.leer", "cliente.leer", "plazo.leer", "plazo.crear", "audiencia.leer",
+        "causa.leer", "cliente.leer", "plazo.leer", "plazo.crear", "plazo.editar", "audiencia.leer",
         "audiencia.crear", "documento.leer", "documento.crear", "gasto.leer",
     },
     "administrativo": {
