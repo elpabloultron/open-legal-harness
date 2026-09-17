@@ -1,26 +1,40 @@
 {
-  "_nota": "Feriados legales de Chile usados SOLO para computar plazos de dias habiles (Art. 66 CPC). Fuente normativa: Ley 19.973 (traslado de feriados), Ley 20.148, Ley 20.299 (Iglesias Evangelicas), Ley 21.357 (Dia Nacional de los Pueblos Indigenas). VALIDAR contra el calendario oficial del ano antes de usar en juicio: un feriado mal cargado cambia un plazo fatal.",
+  "_nota": "Feriados legales de Chile usados para computar plazos de días hábiles (Art. 66 CPC). No se adivinan: cada entrada trae su respaldo legal. El cómputo solo usa la fecha; el nombre y la ley están para poder fundamentar el vencimiento si alguien lo cuestiona.",
   "_pendiente_validacion": {
-    "2026": true,
     "2027": true
   },
+  "_validado": {
+    "2026": {
+      "fecha_validacion": "2026-09-17",
+      "fuentes": [
+        "gob.cl — Feriados 2026 (listado oficial y cuáles son irrenunciables)",
+        "Ley 21.357 — Día Nacional de los Pueblos Indígenas se celebra el 21 de junio"
+      ],
+      "nota": "16 feriados nacionales. Los irrenunciables son 1 de enero, 1 de mayo, 18 y 19 de septiembre y 25 de diciembre (Ley 19.973)."
+    }
+  },
   "2026": [
-    "2026-01-01",
-    "2026-04-03",
-    "2026-04-04",
-    "2026-05-01",
-    "2026-05-21",
-    "2026-06-20",
-    "2026-06-29",
-    "2026-07-16",
-    "2026-08-15",
-    "2026-09-18",
-    "2026-09-19",
-    "2026-10-12",
-    "2026-10-31",
-    "2026-11-01",
-    "2026-12-08",
-    "2026-12-25"
+    { "fecha": "2026-01-01", "nombre": "Año Nuevo", "ley": "Ley 2.977, Ley 19.973", "irrenunciable": true },
+    { "fecha": "2026-04-03", "nombre": "Viernes Santo", "ley": "Ley 2.977", "irrenunciable": false },
+    { "fecha": "2026-04-04", "nombre": "Sábado Santo", "ley": "Ley 2.977", "irrenunciable": false },
+    { "fecha": "2026-05-01", "nombre": "Día Nacional del Trabajo", "ley": "Código del Trabajo, Ley 19.973", "irrenunciable": true },
+    { "fecha": "2026-05-21", "nombre": "Día de las Glorias Navales", "ley": "Ley 2.977", "irrenunciable": false },
+    { "fecha": "2026-06-21", "nombre": "Día Nacional de los Pueblos Indígenas", "ley": "Ley 21.357", "irrenunciable": false },
+    { "fecha": "2026-06-29", "nombre": "San Pedro y San Pablo", "ley": "Ley 2.977, Ley 18.432, Ley 19.668", "irrenunciable": false },
+    { "fecha": "2026-07-16", "nombre": "Día de la Virgen del Carmen", "ley": "Ley 20.148", "irrenunciable": false },
+    { "fecha": "2026-08-15", "nombre": "Asunción de la Virgen", "ley": "Ley 2.977", "irrenunciable": false },
+    { "fecha": "2026-09-18", "nombre": "Independencia Nacional", "ley": "Ley 2.977, Ley 19.973", "irrenunciable": true },
+    { "fecha": "2026-09-19", "nombre": "Día de las Glorias del Ejército", "ley": "Ley 2.977, Ley 20.629", "irrenunciable": true },
+    { "fecha": "2026-10-12", "nombre": "Encuentro de Dos Mundos", "ley": "Ley 3.810, Ley 19.668", "irrenunciable": false },
+    { "fecha": "2026-10-31", "nombre": "Día de las Iglesias Evangélicas y Protestantes", "ley": "Ley 20.299", "irrenunciable": false },
+    { "fecha": "2026-11-01", "nombre": "Día de Todos los Santos", "ley": "Ley 2.977", "irrenunciable": false },
+    { "fecha": "2026-12-08", "nombre": "Inmaculada Concepción", "ley": "Ley 2.977", "irrenunciable": false },
+    { "fecha": "2026-12-25", "nombre": "Navidad", "ley": "Ley 2.977, Ley 19.973", "irrenunciable": true }
   ],
-  "2027": []
+  "2027": [],
+  "_feriados_regionales_2026": [
+    { "fecha": "2026-06-07", "nombre": "Asalto y Toma del Morro de Arica", "aplica_en": "Región de Arica y Parinacota", "ley": "Ley 20.663" },
+    { "fecha": "2026-08-20", "nombre": "Nacimiento del Prócer de la Independencia", "aplica_en": "Chillán y Chillán Viejo", "ley": "Ley 16.535, Ley 20.768" }
+  ],
+  "_nota_regionales": "Los regionales NO se cuentan por defecto: solo suspenden para su región o comuna. El cómputo usa los nacionales; el abogado decide si su tribunal respeta el regional."
 }

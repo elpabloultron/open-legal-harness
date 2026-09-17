@@ -21,10 +21,27 @@ DIAS_SEMANA = ("lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "d
 
 
 def cargar_feriados(anio: int, ruta: pathlib.Path | None = None) -> set[dt.date]:
+    """Fechas feriadas del año. Acepta entradas como texto o como ficha con nombre y ley."""
     ruta = ruta or ARCHIVO_FERIADOS
     datos = json.loads(pathlib.Path(ruta).read_text(encoding="utf-8"))
     crudos = datos.get(str(anio), datos.get(anio, []))
-    return {dt.date.fromisoformat(d) for d in crudos}
+    fechas: set[dt.date] = set()
+    for entrada in crudos:
+        if isinstance(entrada, dict):
+            fechas.add(dt.date.fromisoformat(entrada["fecha"]))
+        else:
+            fechas.add(dt.date.fromisoformat(entrada))
+    return fechas
+
+
+def ficha_feriado(anio: int, dia: dt.date, ruta: pathlib.Path | None = None) -> dict | None:
+    """Nombre y ley del feriado, para poder fundamentar el cómputo."""
+    ruta = ruta or ARCHIVO_FERIADOS
+    datos = json.loads(pathlib.Path(ruta).read_text(encoding="utf-8"))
+    for entrada in datos.get(str(anio), []):
+        if isinstance(entrada, dict) and entrada.get("fecha") == dia.isoformat():
+            return entrada
+    return None
 
 
 def es_habil(dia: dt.date, feriados: set[dt.date], sabado_habil: bool = True) -> bool:
@@ -42,9 +59,11 @@ def vencimiento(
     feriados: set[dt.date] | None = None,
     sabado_habil: bool = True,
 ) -> dict:
-    """Devuelve {fecha_vencimiento, detalle} contando `dias` habiles.
+    """Devuelve {fecha_vencimiento, detalle, advertencias} contando `dias` habiles.
 
-    Se empieza a contar desde el dia siguiente a la notificacion.
+    Se empieza a contar desde el dia siguiente a la notificacion. Si el computo
+    pisa un año cuyos feriados no estan validados, lo dice en `advertencias`: un
+    vencimiento que depende de un feriado desconocido no se puede usar en juicio.
     """
     if dias <= 0:
         raise ValueError("los dias del plazo deben ser mayores que cero")
@@ -65,6 +84,9 @@ def vencimiento(
         motivo = ""
         if not habil:
             motivo = "feriado" if dia in feriados else ("domingo" if dia.weekday() == 6 else "sabado")
+            ficha = ficha_feriado(dia.year, dia)
+            if ficha:
+                motivo = f"feriado: {ficha.get('nombre')} ({ficha.get('ley')})"
         else:
             contados += 1
         detalle.append(
@@ -76,7 +98,15 @@ def vencimiento(
                 "dia_contado": contados if habil else None,
             }
         )
-    return {"fecha_vencimiento": dia.isoformat(), "detalle": detalle}
+
+    advertencias: list[str] = []
+    for anio in range(fecha_notificacion.year, dia.year + 1):
+        if feriados_por_validar(anio) or not cargar_feriados(anio):
+            advertencias.append(
+                f"los feriados de {anio} no están validados contra el calendario oficial: "
+                f"revisa el vencimiento antes de usarlo en juicio"
+            )
+    return {"fecha_vencimiento": dia.isoformat(), "detalle": detalle, "advertencias": advertencias}
 
 
 def feriados_por_validar(anio: int) -> bool:

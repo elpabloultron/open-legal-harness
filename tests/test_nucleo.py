@@ -5,6 +5,7 @@ Solo libreria estandar:  python3 -m unittest discover -s tests
 from __future__ import annotations
 
 import datetime as dt
+import json
 import pathlib
 import sys
 import tempfile
@@ -145,6 +146,48 @@ class TestPlazosArt66(BaseConDB):
     def test_dias_invalidos(self):
         with self.assertRaises(ValueError):
             plazos.vencimiento(dt.date(2026, 9, 17), 0)
+
+    def test_plazo_que_cruza_a_un_año_sin_feriados_validados_avisa(self):
+        """30-12-2026 + 3 hábiles. El catálogo de 2027 está vacío, así que el cómputo
+        no puede dar por feriado el 1 de enero: tiene que avisar que falta el dato."""
+        resultado = plazos.vencimiento(dt.date(2026, 12, 30), 3)
+        self.assertTrue(
+            any("2027" in aviso for aviso in resultado["advertencias"]),
+            "el cómputo debe advertir que los feriados de 2027 no están validados",
+        )
+        motivos = {d["fecha"]: d["motivo"] for d in resultado["detalle"]}
+        self.assertEqual(motivos.get("2027-01-01"), "", "no se inventa un feriado que no está en el catálogo")
+        self.assertEqual(
+            [d for d in resultado["detalle"] if d["habil"]][-1]["fecha"], resultado["fecha_vencimiento"]
+        )
+
+    def test_los_feriados_se_fundamentan_con_su_nombre_y_ley(self):
+        # 17-09-2026 (jueves) + 1 hábil: el 18 y el 19 son feriados y el 20 domingo
+        resultado = plazos.vencimiento(dt.date(2026, 9, 17), 1)
+        self.assertEqual(resultado["fecha_vencimiento"], "2026-09-21")
+        motivos = [d["motivo"] for d in resultado["detalle"] if not d["habil"]]
+        self.assertTrue(any("Independencia" in m for m in motivos), motivos)
+        self.assertTrue(any("Glorias del Ejército" in m for m in motivos), motivos)
+        self.assertTrue(all("Ley" in m or "ley" in m for m in motivos if "feriado" in m))
+        self.assertEqual(resultado["advertencias"], [], "2026 está validado")
+
+    def test_catalogo_de_feriados_validado_y_con_respaldo(self):
+        """El catálogo dice de dónde sale cada feriado: sin eso no se puede fundamentar un vencimiento."""
+        datos = json.loads(plazos.ARCHIVO_FERIADOS.read_text(encoding="utf-8"))
+        nacionales_2026 = datos["2026"]
+        self.assertEqual(len(nacionales_2026), 16, "son 16 feriados nacionales en 2026")
+        for entrada in nacionales_2026:
+            self.assertIn("ley", entrada, f"{entrada['fecha']} sin respaldo legal")
+            self.assertTrue(entrada["nombre"])
+        # la fecha oficial del Día de los Pueblos Indígenas es el 21 de junio (Ley 21.357)
+        fechas = {e["fecha"] for e in nacionales_2026}
+        self.assertIn("2026-06-21", fechas)
+        self.assertNotIn("2026-06-20", fechas)
+        # 2026 validado; 2027 todavía no
+        self.assertFalse(plazos.feriados_por_validar(2026))
+        self.assertTrue(plazos.feriados_por_validar(2027))
+        ficha = plazos.ficha_feriado(2026, dt.date(2026, 9, 18))
+        self.assertIn("Independencia", ficha["nombre"])
 
     def test_plazo_guardado_en_causa(self):
         cliente = service.crear_cliente(self.db, self.socio, "Cliente Plazo")

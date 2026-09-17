@@ -121,7 +121,13 @@ class TestHerramientas(BaseMCP):
         calculo, error = self.llamar("crm_plazo_calcular", notificacion="2026-09-17", dias=8)
         self.assertFalse(error)
         self.assertEqual(calculo["fecha_vencimiento"], "2026-09-29")
-        self.assertTrue(calculo["feriados_pendientes_de_validacion"])
+        self.assertFalse(calculo["feriados_pendientes_de_validacion"], "2026 ya está validado")
+        self.assertEqual(calculo["advertencias"], [])
+
+    def test_calculo_que_cruza_a_un_año_sin_validar_avisa(self):
+        calculo, error = self.llamar("crm_plazo_calcular", notificacion="2026-12-30", dias=3)
+        self.assertFalse(error)
+        self.assertTrue(any("2027" in a for a in calculo["advertencias"]))
 
     def test_crear_plazo_y_verlo_en_el_listado(self):
         creado, error = self.llamar(

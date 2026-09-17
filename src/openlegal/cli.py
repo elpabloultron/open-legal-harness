@@ -179,6 +179,8 @@ def cmd_plazo_crear(args) -> None:
         fecha_notificacion=args.notificacion, tipo=args.tipo, es_fatal=not args.no_fatal,
     )
     print(f"plazo {resultado['id']} creado. Vence: {resultado['fecha_vencimiento']}")
+    for aviso in (resultado["calculo"] or {}).get("advertencias", []):
+        print(f"AVISO: {aviso}")
     if resultado["calculo"] and args.ver_detalle:
         _imprimir("computo de dias habiles (Art. 66 CPC)", resultado["calculo"]["detalle"])
 
@@ -224,8 +226,8 @@ def cmd_plazo_simular(args) -> None:
     notificacion = dt.date.fromisoformat(args.notificacion)
     resultado = plazos.vencimiento(notificacion, args.dias)
     print(f"notificacion: {notificacion.isoformat()} | {args.dias} dias habiles")
-    if plazos.feriados_por_validar(notificacion.year):
-        print(f"AVISO: los feriados de {notificacion.year} estan marcados como PENDIENTES DE VALIDACION")
+    for aviso in resultado["advertencias"]:
+        print(f"AVISO: {aviso}")
     _imprimir("detalle", resultado["detalle"])
     print(f"\nVENCE: {resultado['fecha_vencimiento']}")
 

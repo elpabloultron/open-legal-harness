@@ -148,6 +148,7 @@ async function guardarPlazo(evento) {
       }),
     });
     caja.innerHTML = `
+      ${(previo.advertencias || []).map((a) => `<div class="aviso">⚠️ ${escapar(a)}</div>`).join("")}
       <div class="resultado">vence el ${fecha(previo.fecha_vencimiento)}</div>
       <table class="detalle"><thead><tr><th>Fecha</th><th>Día</th><th>Cuenta</th><th>Motivo</th></tr></thead>
       <tbody>${previo.detalle.map((d) => `<tr class="${d.habil ? "" : "festivo"}">
