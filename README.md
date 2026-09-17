@@ -124,6 +124,23 @@ Los plugins cliente externos se instalan con `dsh plugin --profile <perfil> add 
 el perfil se crea desde la plantilla oficial:
 `dsh --profile legal --from-default-profile web`.
 
+## Entregar el expediente a la IA
+
+El flujo está pensado para que análisis con IA sea **demostrable**: autorización
+por causa con base de licitud, minimización del texto (RUT, correos y nombres a
+marcadores que se quedan en el estudio) y registro de cada comunicación con hash,
+proveedor, modelo, país y responsable.
+
+```bash
+openlegal ia proveedores                      # qué sabemos de cada proveedor
+openlegal ia autorizar --causa 1 --titular "..."
+openlegal ia redactar  --causa 1 --archivo demanda.txt
+openlegal ia registrar --causa 1 --proveedor anthropic --modelo ... --redactado --archivo demanda_minimizada.txt
+openlegal ia transferencias                   # bitácora
+```
+
+Detalle legal en [docs/ia_y_transferencia.md](docs/ia_y_transferencia.md).
+
 ## Cómputo de plazos (Art. 66 CPC)
 
 Los plazos de días son **de días hábiles**: se cuentan desde el día siguiente a la

@@ -28,7 +28,7 @@ PERMISOS: dict[str, set[str]] = {
         "audiencia.leer", "audiencia.crear", "documento.leer", "documento.crear",
         "documento.publicar", "honorario.leer", "honorario.editar", "gasto.leer",
         "gasto.editar", "usuario.gestionar", "auditoria.leer", "reporte.panel",
-        "honorario.leer.todos",
+        "honorario.leer.todos", "ia.autorizar", "ia.enviar", "ia.leer",
     },
     # Administrador del sistema: gestiona usuarios y ve todo el estudio para
     # operar el CRM (agenda, plazos, clientes), pero no toca la redacción ni las
@@ -42,7 +42,7 @@ PERMISOS: dict[str, set[str]] = {
         "causa.leer", "causa.crear", "causa.editar", "cliente.leer", "cliente.editar",
         "plazo.leer", "plazo.crear", "plazo.cerrar", "audiencia.leer", "audiencia.crear",
         "documento.leer", "documento.crear", "documento.publicar", "gasto.leer",
-        "honorario.leer", "reporte.panel",
+        "honorario.leer", "reporte.panel", "ia.autorizar", "ia.enviar", "ia.leer",
     },
     "paralegal": {
         "causa.leer", "cliente.leer", "plazo.leer", "plazo.crear", "audiencia.leer",

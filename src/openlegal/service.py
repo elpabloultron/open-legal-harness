@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from . import auth, plazos
+from . import auth, ia, plazos
 from .db import DB
 
 
@@ -18,6 +18,7 @@ def crear_cliente(db: DB, usuario: dict, nombre: str, rut: str | None = None, **
         "nombre": nombre,
         "rut": rut,
         "tipo_persona": extra.get("tipo_persona", "natural"),
+        "representante_legal": extra.get("representante_legal"),
         "email": extra.get("email"),
         "telefono": extra.get("telefono"),
         "direccion": extra.get("direccion"),
@@ -189,6 +190,157 @@ def agenda(db: DB, usuario: dict, desde: str | None = None, dias: int = 30) -> l
         f"SELECT a.*, c.caratula FROM audiencias a JOIN causas c ON c.id = a.causa_id "
         f"WHERE a.causa_id IN ({marcadores}) AND a.fecha BETWEEN ? AND ? ORDER BY a.fecha, a.hora",
         (*sorted(visibles), desde, hasta),
+    )
+
+
+# ------------------------------------------------------- IA y transferencias
+def autorizar_ia(
+    db: DB,
+    usuario: dict,
+    causa_id: int,
+    alcance: str = "analisis",
+    titular: str | None = None,
+    base_licitud: str | None = None,
+) -> int:
+    """Deja registrado que esta causa puede tratarse con IA, hasta que se revoque."""
+    auth.exigir(db, usuario, "ia.autorizar", causa_id)
+    if alcance not in ("analisis", "redaccion", "ambos"):
+        raise ValueError("alcance debe ser analisis, redaccion o ambos")
+    autorizacion_id = db.insertar(
+        "autorizaciones_ia",
+        {
+            "causa_id": causa_id,
+            "alcance": alcance,
+            "titular": titular,
+            "registrado_por": usuario["id"],
+            **({"base_licitud": base_licitud} if base_licitud else {}),
+        },
+    )
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], "ia.autorizar", "autorizaciones_ia",
+        autorizacion_id, f"causa={causa_id} alcance={alcance} titular={titular or 's/informar'}",
+    )
+    return autorizacion_id
+
+
+def revocar_ia(db: DB, usuario: dict, causa_id: int) -> int:
+    """Revoca las autorizaciones vigentes de una causa (el titular puede arrepentirse)."""
+    auth.exigir(db, usuario, "ia.autorizar", causa_id)
+    vigentes = db.todos(
+        "SELECT id FROM autorizaciones_ia WHERE causa_id = ? AND vigente = 1", (causa_id,)
+    )
+    for fila in vigentes:
+        db.ejecutar(
+            "UPDATE autorizaciones_ia SET vigente = 0, revocada_en = CURRENT_TIMESTAMP WHERE id = ?",
+            (fila["id"],),
+        )
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], "ia.revocar", "autorizaciones_ia",
+        causa_id, f"{len(vigentes)} autorizacion(es) revocada(s)",
+    )
+    return len(vigentes)
+
+
+def estado_ia(db: DB, usuario: dict, causa_id: int) -> dict:
+    auth.exigir(db, usuario, "ia.leer", causa_id)
+    vigente = db.uno(
+        "SELECT * FROM autorizaciones_ia WHERE causa_id = ? AND vigente = 1 ORDER BY id DESC",
+        (causa_id,),
+    )
+    enviadas = db.uno(
+        "SELECT COUNT(*) AS total FROM transferencias_ia WHERE causa_id = ?", (causa_id,)
+    )
+    return {
+        "causa_id": causa_id,
+        "autorizado": bool(vigente),
+        "autorizacion": dict(vigente) if vigente else None,
+        "transferencias": enviadas["total"] if enviadas else 0,
+        "terminos_a_minimizar": ia.terminos_de_causa(db, causa_id),
+    }
+
+
+def registrar_transferencia(
+    db: DB,
+    usuario: dict,
+    causa_id: int,
+    proveedor: str,
+    payload: str,
+    modelo: str | None = None,
+    documentos: str | None = None,
+    redactado: bool = False,
+) -> dict:
+    """Registra que un texto de la causa salió hacia un proveedor de IA.
+
+    Exige autorización vigente: sin ella, se niega y queda el intento en la bitácora.
+    Guarda hash y tamaño, no el contenido — así se puede demostrar qué salió sin
+    duplicar el expediente dentro de la base.
+    """
+    auth.exigir(db, usuario, "ia.enviar", causa_id)
+    if proveedor not in ia.PROVEEDORES:
+        raise ValueError(f"proveedor desconocido: {proveedor} (ver openlegal ia proveedores)")
+    autorizacion = db.uno(
+        "SELECT * FROM autorizaciones_ia WHERE causa_id = ? AND vigente = 1 ORDER BY id DESC",
+        (causa_id,),
+    )
+    if not autorizacion:
+        auth.auditar(
+            db, usuario["estudio_id"], usuario["id"], "ia.sin_autorizacion", "transferencias_ia",
+            causa_id, f"proveedor={proveedor} bloqueado",
+        )
+        raise auth.ErrorPermiso(
+            f"la causa {causa_id} no tiene autorización vigente para tratarse con IA; "
+            f"regístrala con `openlegal ia autorizar --causa {causa_id} --titular \"...\"`"
+        )
+    resumen = db.uno("SELECT caratula FROM causas WHERE id = ?", (causa_id,))
+    transferencia_id = db.insertar(
+        "transferencias_ia",
+        {
+            "causa_id": causa_id,
+            "autorizacion_id": autorizacion["id"],
+            "usuario_id": usuario["id"],
+            "proveedor": proveedor,
+            "modelo": modelo,
+            "destino_pais": ia.PROVEEDORES[proveedor]["pais"],
+            "documentos": documentos or (resumen["caratula"] if resumen else None),
+            "caracteres": len(payload),
+            "hash_payload": ia.hash_payload(payload),
+            "redactado": 1 if redactado else 0,
+        },
+    )
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], "ia.comunicar", "transferencias_ia",
+        transferencia_id,
+        f"causa={causa_id} proveedor={proveedor} modelo={modelo or 's/i'} "
+        f"caracteres={len(payload)} redactado={'si' if redactado else 'no'}",
+    )
+    return {
+        "id": transferencia_id,
+        "proveedor": proveedor,
+        "destino_pais": ia.PROVEEDORES[proveedor]["pais"],
+        "hash_payload": ia.hash_payload(payload),
+        "caracteres": len(payload),
+        "redactado": redactado,
+    }
+
+
+def transferencias_ia(db: DB, usuario: dict, causa_id: int | None = None) -> list[dict]:
+    auth.exigir(db, usuario, "ia.leer")
+    if causa_id is not None:
+        auth.exigir(db, usuario, "ia.leer", causa_id)
+        return db.todos(
+            "SELECT t.*, u.nombre AS usuario FROM transferencias_ia t "
+            "LEFT JOIN usuarios u ON u.id = t.usuario_id WHERE t.causa_id = ? ORDER BY t.id DESC",
+            (causa_id,),
+        )
+    visibles = [c["id"] for c in auth.causas_visibles(db, usuario)]
+    if not visibles:
+        return []
+    marcadores = ", ".join("?" for _ in visibles)
+    return db.todos(
+        f"SELECT t.*, u.nombre AS usuario, c.caratula FROM transferencias_ia t "
+        f"LEFT JOIN usuarios u ON u.id = t.usuario_id LEFT JOIN causas c ON c.id = t.causa_id "
+        f"WHERE t.causa_id IN ({marcadores}) ORDER BY t.id DESC LIMIT 50",
+        tuple(sorted(visibles)),
     )
 
 

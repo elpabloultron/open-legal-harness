@@ -19,9 +19,10 @@ import argparse
 import datetime as dt
 import getpass
 import json
+import pathlib
 import sys
 
-from . import auth, plazos, service
+from . import auth, ia, plazos, service
 from .db import DB
 
 
@@ -130,7 +131,8 @@ def cmd_cliente_crear(args) -> None:
     estudio_id = _estudio_actual(db, args.estudio)
     usuario = _usuario_actual(db, estudio_id, args.usuario)
     cliente_id = service.crear_cliente(
-        db, usuario, args.nombre, args.rut, tipo_persona=args.tipo, email=args.email, telefono=args.telefono
+        db, usuario, args.nombre, args.rut, tipo_persona=args.tipo, email=args.email,
+        telefono=args.telefono, representante_legal=args.representante,
     )
     print(f"cliente {cliente_id} creado: {args.nombre}")
 
@@ -242,6 +244,123 @@ def cmd_auditoria(args) -> None:
     )
 
 
+def cmd_ia_autorizar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    autorizacion = service.autorizar_ia(
+        db, usuario, args.causa, alcance=args.alcance, titular=args.titular, base_licitud=args.base
+    )
+    print(f"autorización {autorizacion} registrada para la causa {args.causa} (alcance {args.alcance})")
+
+
+def cmd_ia_revocar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    cuantas = service.revocar_ia(db, usuario, args.causa)
+    print(f"{cuantas} autorización(es) revocada(s) en la causa {args.causa}")
+
+
+def cmd_ia_estado(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    estado = service.estado_ia(db, usuario, args.causa)
+    print(f"causa {args.causa}: {'AUTORIZADA' if estado['autorizado'] else 'sin autorización'}")
+    if estado["autorizacion"]:
+        autorizacion = estado["autorizacion"]
+        print(f"  alcance: {autorizacion['alcance']} · titular: {autorizacion['titular'] or 's/informar'}")
+        print(f"  base: {autorizacion['base_licitud']}")
+    print(f"  comunicaciones registradas: {estado['transferencias']}")
+    print("  términos a minimizar antes de enviar:")
+    for termino in estado["terminos_a_minimizar"]:
+        print(f"    - {termino}")
+
+
+def _texto_de(args) -> str:
+    if args.archivo:
+        return pathlib.Path(args.archivo).read_text(encoding="utf-8")
+    if args.texto:
+        return args.texto
+    return sys.stdin.read()
+
+
+def cmd_ia_redactar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    terminos = ia.terminos_de_causa(db, args.causa) if args.causa else args.termino
+    limpio, mapa = ia.redactar(_texto_de(args), terminos)
+    print("--- texto minimizado (esto es lo que se manda al modelo) ---")
+    print(limpio)
+    print("--- mapa de reidentificación (SE QUEDA EN EL ESTUDIO) ---")
+    for marcador_, valor in mapa.items():
+        print(f"  {marcador_} = {valor}")
+
+
+def cmd_ia_registrar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    texto = _texto_de(args)
+    if not args.redactado:
+        print("AVISO: registras el envío SIN redactar. Si el texto lleva RUT, correos o nombres,")
+        print("       minimiza primero con `openlegal ia redactar` (el registro queda igual).")
+    registro = service.registrar_transferencia(
+        db, usuario, args.causa, args.proveedor, texto,
+        modelo=args.modelo, documentos=args.documentos, redactado=args.redactado,
+    )
+    print(f"comunicación registrada #{registro['id']}")
+    print(f"  proveedor: {registro['proveedor']} · destino: {registro['destino_pais']}")
+    print(f"  caracteres: {registro['caracteres']} · redactado: {'sí' if registro['redactado'] else 'no'}")
+    print(f"  hash: {registro['hash_payload'][:16]}…")
+
+
+def cmd_ia_transferencias(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    filas = service.transferencias_ia(db, usuario, args.causa)
+    _imprimir(
+        "comunicaciones a proveedores de IA",
+        [
+            {
+                "id": f["id"],
+                "fecha": f["creado_en"],
+                "causa": f.get("caratula") or f["causa_id"],
+                "proveedor": f["proveedor"],
+                "modelo": f["modelo"],
+                "destino": f["destino_pais"],
+                "caracteres": f["caracteres"],
+                "redactado": "sí" if f["redactado"] else "no",
+                "hash": (f["hash_payload"] or "")[:12] + "…",
+            }
+            for f in filas
+        ],
+    )
+
+
+def cmd_ia_proveedores(args) -> None:
+    tabla = [
+        {
+            "proveedor": nombre,
+            "pais": datos["pais"],
+            "entrena_con_datos_de_api": (
+                "no" if datos["entrena_con_api"] is False else
+                ("SIN VERIFICAR" if datos["entrena_con_api"] is None else "sí")
+            ),
+            "retencion": datos["retencion"],
+            "zdr": datos["zdr"],
+        }
+        for nombre, datos in ia.PROVEEDORES.items()
+    ]
+    _imprimir("proveedores de modelos", tabla)
+    print("\nnotas:")
+    for nombre, datos in ia.PROVEEDORES.items():
+        print(f"  {nombre}: {datos['nota']}")
+
+
 def cmd_usuario_clave(args) -> None:
     """Fija la contraseña de un usuario. Se pide dos veces y nunca se escribe en la línea de comandos."""
     db = _ctx(args)
@@ -350,6 +469,7 @@ def construir_parser() -> argparse.ArgumentParser:
     pc.add_argument("--tipo", choices=["natural", "juridica"], default="natural")
     pc.add_argument("--email")
     pc.add_argument("--telefono")
+    pc.add_argument("--representante", help="representante legal (para personas jurídicas)")
     pc.add_argument("--usuario", help="email del usuario que ejecuta")
     pc.add_argument("--estudio", type=int)
     pc.set_defaults(func=cmd_cliente_crear)
@@ -433,6 +553,53 @@ def construir_parser() -> argparse.ArgumentParser:
     pa.add_argument("--usuario")
     pa.add_argument("--estudio", type=int)
     pa.set_defaults(func=cmd_audiencia_crear)
+
+    p = sub.add_parser("ia", help="uso de IA con datos de causas: autorizar, minimizar, registrar")
+    sub_ia = p.add_subparsers(dest="accion", required=True)
+    pi = sub_ia.add_parser("autorizar", help="registra la autorización de la causa para tratarse con IA")
+    pi.add_argument("--causa", type=int, required=True)
+    pi.add_argument("--alcance", default="analisis", choices=["analisis", "redaccion", "ambos"])
+    pi.add_argument("--titular", help="quién autoriza: el cliente o su representante")
+    pi.add_argument("--base", help="base de licitud (por defecto el art. 13 letra e)")
+    pi.add_argument("--usuario")
+    pi.add_argument("--estudio", type=int)
+    pi.set_defaults(func=cmd_ia_autorizar)
+    pi = sub_ia.add_parser("revocar", help="revoca las autorizaciones vigentes de la causa")
+    pi.add_argument("--causa", type=int, required=True)
+    pi.add_argument("--usuario")
+    pi.add_argument("--estudio", type=int)
+    pi.set_defaults(func=cmd_ia_revocar)
+    pi = sub_ia.add_parser("estado", help="autorización, envíos y términos a minimizar")
+    pi.add_argument("--causa", type=int, required=True)
+    pi.add_argument("--usuario")
+    pi.add_argument("--estudio", type=int)
+    pi.set_defaults(func=cmd_ia_estado)
+    pi = sub_ia.add_parser("redactar", help="minimiza un texto antes de mandarlo al modelo")
+    pi.add_argument("--causa", type=int)
+    pi.add_argument("--texto")
+    pi.add_argument("--archivo")
+    pi.add_argument("--termino", action="append", default=[], help="nombre a reemplazar (repetible)")
+    pi.add_argument("--usuario")
+    pi.add_argument("--estudio", type=int)
+    pi.set_defaults(func=cmd_ia_redactar)
+    pi = sub_ia.add_parser("registrar", help="registra un envío ya hecho al proveedor")
+    pi.add_argument("--causa", type=int, required=True)
+    pi.add_argument("--proveedor", required=True, choices=list(ia.PROVEEDORES))
+    pi.add_argument("--modelo")
+    pi.add_argument("--documentos", help="qué se mandó, en palabras (por defecto la carátula)")
+    pi.add_argument("--texto")
+    pi.add_argument("--archivo")
+    pi.add_argument("--redactado", action="store_true", help="el texto se envió minimizado")
+    pi.add_argument("--usuario")
+    pi.add_argument("--estudio", type=int)
+    pi.set_defaults(func=cmd_ia_registrar)
+    pi = sub_ia.add_parser("transferencias", help="bitácora de comunicaciones a proveedores")
+    pi.add_argument("--causa", type=int)
+    pi.add_argument("--usuario")
+    pi.add_argument("--estudio", type=int)
+    pi.set_defaults(func=cmd_ia_transferencias)
+    pi = sub_ia.add_parser("proveedores", help="qué sabemos de cada proveedor: país, retención, entrenamiento")
+    pi.set_defaults(func=cmd_ia_proveedores)
 
     p = sub.add_parser("serve", help="panel web del CRM (para el sidebar del harness)")
     p.add_argument("--host", default="127.0.0.1", help="host de escucha (por defecto solo local)")

@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS clientes (
     rut           TEXT,
     nombre        TEXT NOT NULL,
     tipo_persona  TEXT NOT NULL DEFAULT 'natural', -- natural | juridica
+    representante_legal TEXT,                        -- obligatorio en la practica para una SpA o Ltda.
     email         TEXT,
     telefono      TEXT,
     direccion     TEXT,
@@ -149,6 +150,40 @@ CREATE TABLE IF NOT EXISTS auditoria (
 
 CREATE INDEX IF NOT EXISTS idx_causas_estudio    ON causas (estudio_id, estado_procesal);
 CREATE INDEX IF NOT EXISTS idx_equipo_usuario    ON causa_equipo (usuario_id);
+-- Autorizacion por causa para tratar sus datos con herramientas de IA (modelos
+-- externos). Es el papel que respalda la comunicacion a un tercero: quien
+-- autoriza, con que base de licitud y hasta cuando.
+CREATE TABLE IF NOT EXISTS autorizaciones_ia (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    causa_id       INTEGER NOT NULL REFERENCES causas(id) ON DELETE CASCADE,
+    alcance        TEXT NOT NULL DEFAULT 'analisis',   -- analisis|redaccion|ambos
+    base_licitud   TEXT NOT NULL DEFAULT 'art. 13 letra e) Ley 19.628 (texto reformado por la Ley 21.719)',
+    titular        TEXT,                               -- quien autoriza (cliente o su representante)
+    registrado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    vigente        INTEGER NOT NULL DEFAULT 1,
+    creado_en      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revocada_en    TEXT
+);
+
+-- Registro de comunicaciones: que se mando, a quien, cuando y con que hash.
+-- Es la evidencia que permite demostrar el tratamiento ante el titular o la Agencia.
+CREATE TABLE IF NOT EXISTS transferencias_ia (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    causa_id        INTEGER NOT NULL REFERENCES causas(id) ON DELETE CASCADE,
+    autorizacion_id INTEGER REFERENCES autorizaciones_ia(id) ON DELETE SET NULL,
+    usuario_id      INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    proveedor       TEXT NOT NULL,
+    modelo          TEXT,
+    destino_pais    TEXT,
+    documentos      TEXT,
+    caracteres      INTEGER NOT NULL DEFAULT 0,
+    hash_payload    TEXT NOT NULL,
+    redactado       INTEGER NOT NULL DEFAULT 0,
+    creado_en       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_plazos_vencimiento ON plazos (fecha_vencimiento, estado);
 CREATE INDEX IF NOT EXISTS idx_audiencias_fecha  ON audiencias (fecha);
 CREATE INDEX IF NOT EXISTS idx_auditoria_estudio ON auditoria (estudio_id, creado_en);
+CREATE INDEX IF NOT EXISTS idx_transferencias_causa ON transferencias_ia (causa_id, creado_en);
+CREATE INDEX IF NOT EXISTS idx_autorizaciones_causa ON autorizaciones_ia (causa_id, vigente);

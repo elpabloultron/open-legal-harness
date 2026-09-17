@@ -15,6 +15,13 @@ import sqlite3
 RAIZ = pathlib.Path(__file__).resolve().parent
 SCHEMA = RAIZ / "schema.sql"
 
+# Columnas agregadas después de la primera versión. `CREATE TABLE IF NOT EXISTS`
+# no toca una tabla que ya existe, así que las bases viejas se actualizan con
+# ALTER TABLE en `migrar()` — que se corre en cada `openlegal init`.
+COLUMNAS_NUEVAS: dict[str, dict[str, str]] = {
+    "clientes": {"representante_legal": "TEXT"},
+}
+
 
 def url_por_defecto() -> str:
     base = pathlib.Path(os.environ.get("OPENLEGAL_HOME", pathlib.Path.home() / ".openlegal"))
@@ -93,8 +100,16 @@ class DB:
         return int(cur.lastrowid)
 
     # --------------------------------------------------------------- migracion
+    def columnas(self, tabla: str) -> set[str]:
+        if self.dialecto == "sqlite":
+            return {f["name"] for f in self.todos(f"PRAGMA table_info({tabla})")}
+        filas = self.todos(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?", (tabla,)
+        )
+        return {f["column_name"] for f in filas}
+
     def migrar(self) -> list[str]:
-        """Crea tablas e indices. Idempotente: se puede correr en cada arranque."""
+        """Crea tablas e indices y agrega las columnas nuevas. Idempotente."""
         ddl = SCHEMA.read_text(encoding="utf-8")
         sentencias = [s.strip() for s in ddl.split(";") if s.strip() and not set(s.strip()) <= {"-", "\n"}]
         aplicadas = []
@@ -108,6 +123,13 @@ class DB:
             self.ejecutar(sentencia)
             encabezado = " ".join(sentencia.split()[:3])
             aplicadas.append(encabezado)
+
+        for tabla, columnas in COLUMNAS_NUEVAS.items():
+            existentes = self.columnas(tabla)
+            for nombre, definicion in columnas.items():
+                if nombre not in existentes:
+                    self.ejecutar(f"ALTER TABLE {tabla} ADD COLUMN {nombre} {definicion}")
+                    aplicadas.append(f"ALTER {tabla}.{nombre}")
         return aplicadas
 
     def cerrar(self) -> None:

@@ -29,8 +29,8 @@ run usuario crear  --nombre "Marta Rivas" --email admin@estudio.cl      --rol ad
 run usuario crear  --nombre "Ana Pérez"   --email ana@estudio.cl        --rol abogado        --sin-password
 run usuario crear  --nombre "Luis Rojas"  --email luis@estudio.cl       --rol abogado        --sin-password
 run usuario crear  --nombre "Carmen Díaz" --email secretaria@estudio.cl --rol administrativo --sin-password
-run cliente crear  --nombre "Constructora Andes SpA"        --rut 76.543.210-K --tipo juridica
-run cliente crear  --nombre "Inmobiliaria del Sur Ltda."    --rut 77.222.333-4 --tipo juridica
+run cliente crear  --nombre "Constructora Andes SpA"        --rut 76.543.210-3 --tipo juridica --representante "Jorge Fuentes"
+run cliente crear  --nombre "Inmobiliaria del Sur Ltda."    --rut 77.222.333-1 --tipo juridica --representante "Marcela Ruiz"
 run causa crear    --caratula "Pérez con Andes SpA" --cliente 1 --rol-rit "C-1234-2026" \
                    --tribunal "1° Juzgado del Trabajo de Santiago" --materia laboral \
                    --contraparte "Andes SpA" --cuantia 8500000
