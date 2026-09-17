@@ -1,0 +1,12 @@
+# Renglón del CRM Jurídico en el sidebar izquierdo del harness.
+#
+# Este archivo es el `dsh.bundle.patch` del manifiesto: se aplica como capa de
+# perfil sobre dsh-base/dsh-web-app. La mitad host (exports ".") corre en el
+# proceso del harness; la mitad navegador (exports "./client", servida en
+# /plugins/<id>/client.js) la carga la GUI por la declaración `dsh.client`.
+#
+# Montar en un perfil:
+#   dsh plugin --profile legal add link:/ruta/a/Legal Harness/dsh-plugin
+- insert:
+    - id: ui-openlegal-crm
+      name: '@openlegal/dsh-client-ui-crm'

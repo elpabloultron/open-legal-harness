@@ -1,0 +1,53 @@
+{
+  "name": "@openlegal/dsh-client-ui-crm",
+  "version": "0.1.0",
+  "description": "Fila «CRM Jurídico» en el sidebar de DeepSeek Harness, servida por openlegal (Open Legal CRM chileno)",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.1.5-rc.1"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-connection"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/verificar-artefacto.mjs"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "esbuild": "^0.24.0",
+    "react": "^18.3.1",
+    "typescript": "^5.6.3"
+  }
+}

@@ -48,6 +48,82 @@ docker compose up -d
 openlegal --db postgresql://legal:CAMBIAR_CLAVE@localhost:55432/estudio init
 ```
 
+## Panel web (el CRM que va en el sidebar derecho del harness)
+
+```bash
+openlegal serve --port 8899                      # imprime la URL con token
+openlegal --db postgresql://legal:CAMBIAR_CLAVE@localhost:55432/estudio serve --port 8899
+```
+
+Escucha solo en `127.0.0.1` y exige token (401 sin él), igual que el harness. Pestañas:
+**Plazos** (con días restantes y marca de fatal), **Causas** (equipo y próximo vencimiento),
+**Agenda**, **Panel** del socio y **+ Plazo**, que calcula el vencimiento por Art. 66 CPC y
+muestra el detalle día a día antes de guardar.
+
+## Integración con DeepSeek Harness (`dsh`)
+
+Base: [`deepseek-ai/deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness) (MIT,
+CLI `dsh`, «Everything is a Plugin»). No se hace fork: se instala el harness oficial y se
+enchufa el CRM por sus puntos de extensión públicos.
+
+| Paso | Estado |
+|---|---|
+| 1. `dsh` instalado y sirviendo la UI | ✅ verificado (`npm install -g --allow-scripts=... @deepseek-ai/dsh`, `dsh web --port 8799`) |
+| 2. CRM local servido por `openlegal serve` | ✅ verificado (25/25 pruebas, datos reales en SQLite y PostgreSQL) |
+| 3. Fila «CRM Jurídico» bajo *New session* + su panel | ✅ verificado en la GUI real (ver abajo) |
+| 4. MCP: `crm_*` propio + los 64 tools de open-legal-chile | pendiente |
+| 5. Perfil `legal` con todo montado y patch layer | ✅ el perfil monta el plugin; falta sumarle los MCP |
+
+### El plugin del sidebar (`dsh-plugin/`)
+
+Paquete `@openlegal/dsh-client-ui-crm`: fila con ícono en `sidebar.panellist` y panel
+propio en el asiento `main`, direccionados por el mismo id. Se monta sin tocar el
+harness:
+
+```bash
+dsh --profile legal --from-default-profile web
+dsh plugin --profile legal add link:"$PWD/dsh-plugin"
+dsh --profile legal --no-open --port 8801     # ojo: `web` no acepta --profile
+```
+
+Comprobado en un navegador real contra el perfil `legal`: el sidebar queda
+
+```
+New Session
+CRM Jurídico      ← nuestra fila
+Workspaces
+No sessions yet
+Settings
+```
+
+y al pulsarla el área principal cambia al panel del CRM, que sondea el servicio
+local y pide el token la primera vez (queda en el `localStorage` del navegador; el
+token nunca viaja al modelo). El artefacto se construye con esbuild y el build
+**falla si el envoltorio del loader, los externos de React o el patch del perfil no
+están en orden** (`pnpm build && pnpm test`).
+
+Las APIs del paso 3 y 4, leídas del código de `dsh` (no supuestas):
+
+```ts
+// tipo de pestaña en el sidebar derecho (banda `extension`, la de mayor prioridad)
+ctx.sidebarRightTabs.register({ id, kind: 'crm', title, guide })
+ctx.slots.register({ name: 'sidebar.right.pane.tab', key: id }, Body)
+ctx.sidebarRight.openTab('crm', { params: { url } })
+```
+
+```yaml
+# cordis.patch.yml del perfil: un servidor MCP stdio por cada fuente de herramientas
+- id: mcp-crm
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    command: openlegal
+    args: [mcp]
+```
+
+Los plugins cliente externos se instalan con `dsh plugin --profile <perfil> add <paquete>`, y
+el perfil se crea desde la plantilla oficial:
+`dsh --profile legal --from-default-profile web`.
+
 ## Cómputo de plazos (Art. 66 CPC)
 
 Los plazos de días son **de días hábiles**: se cuentan desde el día siguiente a la
