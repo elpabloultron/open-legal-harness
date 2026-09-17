@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-legal-crm"
+version = "0.1.0"
+description = "Harness legal chileno con CRM: modo abogado solo y modo oficina de abogados"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Pablo Ultrón" }]
+keywords = ["legal-tech", "chile", "crm", "derecho-procesal", "art-66-cpc", "abogados"]
+dependencies = []
+
+# Postgres (modo oficina) es opcional: solo se requiere el driver.
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]
+
+[project.scripts]
+openlegal = "openlegal.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

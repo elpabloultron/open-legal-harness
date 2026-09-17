@@ -1,0 +1,362 @@
+"""CLI del Harness Legal: mismo nucleo para abogado solo y para oficina.
+
+  openlegal init --modo solo
+  openlegal estudio crear --nombre "Estudio Perez" --modo oficina
+  openlegal usuario crear --email abogado@estudio.cl --nombre "Ana Perez" --rol abogado
+  openlegal cliente crear --nombre "Constructora Andes SpA" --rut 76.543.210-K
+  openlegal causa crear --caratula "Perez con Andes SpA" --materia laboral
+  openlegal causa asignar --causa 1 --usuario 2 --rol-en-causa colaborador
+  openlegal plazo crear --causa 1 --descripcion "Contestar demanda" --dias 8 --notificacion 2026-09-17
+  openlegal vencimientos --dias 30
+  openlegal agenda --dias 15
+  openlegal panel
+  openlegal auditoria
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import getpass
+import json
+import sys
+
+from . import auth, plazos, service
+from .db import DB
+
+
+def _ctx(args):
+    db = DB(getattr(args, "db", None))
+    db.migrar()
+    return db
+
+
+def _estudio_actual(db: DB, estudio_id: int | None) -> int:
+    if estudio_id:
+        return estudio_id
+    filas = db.todos("SELECT id, nombre FROM estudios ORDER BY id")
+    if not filas:
+        salida_error("no hay estudios creados: corre `openlegal estudio crear --nombre ...`")
+    if len(filas) > 1:
+        salida_error(
+            "hay varios estudios; indica --estudio. Disponibles: "
+            + ", ".join(f"{f['id']}={f['nombre']}" for f in filas)
+        )
+    return filas[0]["id"]
+
+
+def _usuario_actual(db: DB, estudio_id: int, email: str | None) -> dict:
+    if email:
+        usuario = db.uno("SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (estudio_id, email.lower()))
+        if not usuario:
+            salida_error(f"no existe el usuario {email} en el estudio {estudio_id}")
+        usuario.pop("password_hash", None)
+        return usuario
+    usuario = db.uno(
+        "SELECT * FROM usuarios WHERE estudio_id = ? AND rol IN ('socio','abogado') AND activo = 1 ORDER BY id",
+        (estudio_id,),
+    )
+    if not usuario:
+        # En modo solo alcanza cualquier usuario activo (incluido el unico creado).
+        usuario = db.uno("SELECT * FROM usuarios WHERE estudio_id = ? AND activo = 1 ORDER BY id", (estudio_id,))
+    if not usuario:
+        salida_error("no hay usuarios activos; crea uno con `openlegal usuario crear`")
+    usuario.pop("password_hash", None)
+    return usuario
+
+
+def salida_error(mensaje: str) -> None:
+    print(f"error: {mensaje}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _imprimir(titulo: str, filas: list[dict] | dict) -> None:
+    print(f"\n{titulo}")
+    print("-" * len(titulo))
+    if isinstance(filas, dict):
+        filas = [filas]
+    if not filas:
+        print("(sin registros)")
+        return
+    columnas = list(filas[0].keys())
+    print(" | ".join(columnas))
+    for fila in filas:
+        print(" | ".join("" if fila[c] is None else str(fila[c]) for c in columnas))
+
+
+# ------------------------------------------------------------------ comandos
+def cmd_init(args) -> None:
+    db = _ctx(args)
+    tablas = db.migrar()
+    print(f"base de datos lista en {db.url} ({db.dialecto}, {len(tablas)} objetos)")
+
+
+def cmd_estudio_crear(args) -> None:
+    db = _ctx(args)
+    estudio_id = auth.crear_estudio(db, args.nombre, args.rut, args.modo)
+    print(f"estudio {estudio_id} creado: {args.nombre} (modo {args.modo})")
+
+
+def cmd_usuario_crear(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    password = args.password
+    if not password and not args.sin_password:
+        password = getpass.getpass("contrasena (enter para omitir): ") or None
+    actor = db.uno(
+        "SELECT id FROM usuarios WHERE estudio_id = ? AND rol = 'socio' ORDER BY id", (estudio_id,)
+    )
+    usuario_id = auth.crear_usuario(
+        db, estudio_id, args.nombre, args.email, args.rol, password,
+        actor_id=actor["id"] if actor else None,
+    )
+    print(f"usuario {usuario_id} creado: {args.nombre} <{args.email}> rol={args.rol}")
+
+
+def cmd_usuario_listar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    _imprimir(
+        "usuarios del estudio",
+        db.todos(
+            "SELECT id, nombre, email, rol, activo FROM usuarios WHERE estudio_id = ? ORDER BY id",
+            (estudio_id,),
+        ),
+    )
+
+
+def cmd_cliente_crear(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    cliente_id = service.crear_cliente(
+        db, usuario, args.nombre, args.rut, tipo_persona=args.tipo, email=args.email, telefono=args.telefono
+    )
+    print(f"cliente {cliente_id} creado: {args.nombre}")
+
+
+def cmd_causa_crear(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    causa_id = service.crear_causa(
+        db, usuario, args.caratula, cliente_id=args.cliente, rol_rit=args.rol_rit,
+        tribunal=args.tribunal, materia=args.materia, contraparte=args.contraparte,
+        cuantia_clp=args.cuantia,
+    )
+    print(f"causa {causa_id} creada: {args.caratula}")
+
+
+def cmd_causa_listar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    _imprimir(
+        f"causas visibles para {usuario['nombre']} ({usuario['rol']})",
+        [
+            {k: c[k] for k in ("id", "rol_rit", "caratula", "tribunal", "materia", "estado_procesal")}
+            for c in auth.causas_visibles(db, usuario)
+        ],
+    )
+
+
+def cmd_causa_asignar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    service.asignar(db, usuario, args.causa, args.a_usuario, args.rol_en_causa)
+    print(f"usuario {args.a_usuario} agregado a la causa {args.causa} como {args.rol_en_causa}")
+
+
+def cmd_plazo_crear(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    resultado = service.crear_plazo(
+        db, usuario, args.causa, args.descripcion, dias=args.dias,
+        fecha_notificacion=args.notificacion, tipo=args.tipo, es_fatal=not args.no_fatal,
+    )
+    print(f"plazo {resultado['id']} creado. Vence: {resultado['fecha_vencimiento']}")
+    if resultado["calculo"] and args.ver_detalle:
+        _imprimir("computo de dias habiles (Art. 66 CPC)", resultado["calculo"]["detalle"])
+
+
+def cmd_vencimientos(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    filas = service.vencimientos(db, usuario, args.desde, args.dias)
+    _imprimir(
+        f"vencimientos desde {args.desde or dt.date.today().isoformat()} ({args.dias} dias)",
+        [
+            {
+                "plazo": f["id"],
+                "vence": f["fecha_vencimiento"],
+                "fatal": "si" if f["es_fatal"] else "no",
+                "causa": f["caratula"],
+                "descripcion": f["descripcion"],
+            }
+            for f in filas
+        ],
+    )
+
+
+def cmd_agenda(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    _imprimir(f"agenda ({args.dias} dias)", service.agenda(db, usuario, args.desde, args.dias))
+
+
+def cmd_panel(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    datos = service.panel(db, usuario)
+    _imprimir("causas por estado", datos["causas_por_estado"])
+    _imprimir("carga por abogado", datos["carga_por_abogado"])
+    print(f"\nplazos pendientes: {datos['plazos_pendientes']}")
+
+
+def cmd_plazo_simular(args) -> None:
+    notificacion = dt.date.fromisoformat(args.notificacion)
+    resultado = plazos.vencimiento(notificacion, args.dias)
+    print(f"notificacion: {notificacion.isoformat()} | {args.dias} dias habiles")
+    if plazos.feriados_por_validar(notificacion.year):
+        print(f"AVISO: los feriados de {notificacion.year} estan marcados como PENDIENTES DE VALIDACION")
+    _imprimir("detalle", resultado["detalle"])
+    print(f"\nVENCE: {resultado['fecha_vencimiento']}")
+
+
+def cmd_auditoria(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    _imprimir(
+        "bitacora",
+        db.todos(
+            "SELECT a.id, a.creado_en, u.nombre AS usuario, a.accion, a.entidad, a.entidad_id, a.detalle "
+            "FROM auditoria a LEFT JOIN usuarios u ON u.id = a.usuario_id "
+            "WHERE a.estudio_id = ? ORDER BY a.id DESC LIMIT ?",
+            (estudio_id, args.limite),
+        ),
+    )
+
+
+def construir_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="openlegal", description="Harness legal chileno con CRM")
+    parser.add_argument("--db", help="URL de la base: sqlite:///ruta.db o postgresql://...")
+    sub = parser.add_subparsers(dest="comando", required=True)
+
+    p = sub.add_parser("init", help="crea el esquema en la base")
+    p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("estudio", help="estudios")
+    sub_e = p.add_subparsers(dest="accion", required=True)
+    pe = sub_e.add_parser("crear")
+    pe.add_argument("--nombre", required=True)
+    pe.add_argument("--rut")
+    pe.add_argument("--modo", choices=["solo", "oficina"], default="solo")
+    pe.set_defaults(func=cmd_estudio_crear)
+
+    p = sub.add_parser("usuario", help="usuarios y roles")
+    sub_u = p.add_subparsers(dest="accion", required=True)
+    pu = sub_u.add_parser("crear")
+    pu.add_argument("--nombre", required=True)
+    pu.add_argument("--email", required=True)
+    pu.add_argument("--rol", required=True, choices=list(auth.ROLES))
+    pu.add_argument("--password")
+    pu.add_argument("--sin-password", action="store_true")
+    pu.add_argument("--estudio", type=int)
+    pu.set_defaults(func=cmd_usuario_crear)
+    pu = sub_u.add_parser("listar")
+    pu.add_argument("--estudio", type=int)
+    pu.set_defaults(func=cmd_usuario_listar)
+
+    p = sub.add_parser("cliente", help="clientes")
+    sub_c = p.add_subparsers(dest="accion", required=True)
+    pc = sub_c.add_parser("crear")
+    pc.add_argument("--nombre", required=True)
+    pc.add_argument("--rut")
+    pc.add_argument("--tipo", choices=["natural", "juridica"], default="natural")
+    pc.add_argument("--email")
+    pc.add_argument("--telefono")
+    pc.add_argument("--usuario", help="email del usuario que ejecuta")
+    pc.add_argument("--estudio", type=int)
+    pc.set_defaults(func=cmd_cliente_crear)
+
+    p = sub.add_parser("causa", help="causas y expedientes")
+    sub_ca = p.add_subparsers(dest="accion", required=True)
+    pca = sub_ca.add_parser("crear")
+    pca.add_argument("--caratula", required=True)
+    pca.add_argument("--cliente", type=int)
+    pca.add_argument("--rol-rit")
+    pca.add_argument("--tribunal")
+    pca.add_argument("--materia")
+    pca.add_argument("--contraparte")
+    pca.add_argument("--cuantia", type=int)
+    pca.add_argument("--usuario")
+    pca.add_argument("--estudio", type=int)
+    pca.set_defaults(func=cmd_causa_crear)
+    pca = sub_ca.add_parser("listar")
+    pca.add_argument("--usuario")
+    pca.add_argument("--estudio", type=int)
+    pca.set_defaults(func=cmd_causa_listar)
+    pca = sub_ca.add_parser("asignar")
+    pca.add_argument("--causa", type=int, required=True)
+    pca.add_argument("--a-usuario", type=int, required=True)
+    pca.add_argument("--rol-en-causa", default="colaborador", choices=["responsable", "colaborador", "apoyo"])
+    pca.add_argument("--usuario")
+    pca.add_argument("--estudio", type=int)
+    pca.set_defaults(func=cmd_causa_asignar)
+
+    p = sub.add_parser("plazo", help="plazos procesales")
+    sub_p = p.add_subparsers(dest="accion", required=True)
+    pp = sub_p.add_parser("crear")
+    pp.add_argument("--causa", type=int, required=True)
+    pp.add_argument("--descripcion", required=True)
+    pp.add_argument("--dias", type=int)
+    pp.add_argument("--notificacion", help="YYYY-MM-DD")
+    pp.add_argument("--tipo", default="judicial", choices=["judicial", "administrativo", "interno"])
+    pp.add_argument("--no-fatal", action="store_true")
+    pp.add_argument("--ver-detalle", action="store_true")
+    pp.add_argument("--usuario")
+    pp.add_argument("--estudio", type=int)
+    pp.set_defaults(func=cmd_plazo_crear)
+    pp = sub_p.add_parser("simular", help="calcula un vencimiento sin guardarlo")
+    pp.add_argument("--notificacion", required=True)
+    pp.add_argument("--dias", type=int, required=True)
+    pp.set_defaults(func=cmd_plazo_simular)
+
+    p = sub.add_parser("vencimientos", help="proximos plazos")
+    p.add_argument("--desde")
+    p.add_argument("--dias", type=int, default=30)
+    p.add_argument("--usuario")
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_vencimientos)
+
+    p = sub.add_parser("agenda", help="audiencias proximas")
+    p.add_argument("--desde")
+    p.add_argument("--dias", type=int, default=30)
+    p.add_argument("--usuario")
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_agenda)
+
+    p = sub.add_parser("panel", help="KPIs del estudio")
+    p.add_argument("--usuario")
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_panel)
+
+    p = sub.add_parser("auditoria", help="bitacora de acciones")
+    p.add_argument("--limite", type=int, default=25)
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_auditoria)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = construir_parser().parse_args(argv)
+    args.func(args)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

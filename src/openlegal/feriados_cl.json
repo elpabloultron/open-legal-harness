@@ -1,0 +1,26 @@
+{
+  "_nota": "Feriados legales de Chile usados SOLO para computar plazos de dias habiles (Art. 66 CPC). Fuente normativa: Ley 19.973 (traslado de feriados), Ley 20.148, Ley 20.299 (Iglesias Evangelicas), Ley 21.357 (Dia Nacional de los Pueblos Indigenas). VALIDAR contra el calendario oficial del ano antes de usar en juicio: un feriado mal cargado cambia un plazo fatal.",
+  "_pendiente_validacion": {
+    "2026": true,
+    "2027": true
+  },
+  "2026": [
+    "2026-01-01",
+    "2026-04-03",
+    "2026-04-04",
+    "2026-05-01",
+    "2026-05-21",
+    "2026-06-20",
+    "2026-06-29",
+    "2026-07-16",
+    "2026-08-15",
+    "2026-09-18",
+    "2026-09-19",
+    "2026-10-12",
+    "2026-10-31",
+    "2026-11-01",
+    "2026-12-08",
+    "2026-12-25"
+  ],
+  "2027": []
+}
