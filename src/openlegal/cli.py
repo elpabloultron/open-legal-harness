@@ -407,6 +407,19 @@ def cmd_audiencia_crear(args) -> None:
     print(f"audiencia {audiencia_id} creada: {args.tipo} {args.fecha} {args.hora or ''}".strip())
 
 
+def cmd_mcp(args) -> None:
+    """Servidor MCP por stdio: es el puente para que el agente escriba en el CRM."""
+    from .mcp import main as mcp_main
+
+    db = getattr(args, "db", None)
+    argv = []
+    if db:
+        argv += ["--db", db]
+    if args.usuario:
+        argv += ["--usuario", args.usuario]
+    mcp_main(argv)
+
+
 def cmd_serve(args) -> None:
     try:
         import uvicorn
@@ -600,6 +613,10 @@ def construir_parser() -> argparse.ArgumentParser:
     pi.set_defaults(func=cmd_ia_transferencias)
     pi = sub_ia.add_parser("proveedores", help="qué sabemos de cada proveedor: país, retención, entrenamiento")
     pi.set_defaults(func=cmd_ia_proveedores)
+
+    p = sub.add_parser("mcp", help="servidor MCP por stdio (puente para el agente)")
+    p.add_argument("--usuario", help="email del usuario con el que actúa el agente")
+    p.set_defaults(func=cmd_mcp)
 
     p = sub.add_parser("serve", help="panel web del CRM (para el sidebar del harness)")
     p.add_argument("--host", default="127.0.0.1", help="host de escucha (por defecto solo local)")

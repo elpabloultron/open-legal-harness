@@ -124,6 +124,22 @@ Los plugins cliente externos se instalan con `dsh plugin --profile <perfil> add 
 el perfil se crea desde la plantilla oficial:
 `dsh --profile legal --from-default-profile web`.
 
+## MCP: el agente escribe en el CRM
+
+`openlegal mcp` expone el CRM como servidor MCP (JSON-RPC 2.0 sobre stdio, mismo patrón
+que `open-legal-chile`), con 13 herramientas: `crm_causa_buscar`, `crm_causa_leer`,
+`crm_plazo_calcular`, `crm_plazo_crear`, `crm_plazo_listar`, `crm_plazo_cumplido`,
+`crm_audiencia_crear`, `crm_documento_registrar`, `crm_ia_estado`, `crm_ia_redactar`,
+`crm_ia_registrar`, `crm_estudio` y `crm_causa_leer`.
+
+Con eso el flujo completo queda: **causa.pdf → análisis con las 64 herramientas de
+open-legal-chile → plazos, audiencias y documentos escritos en el CRM**, todo desde el
+chat, sin teclear comandos.
+
+En el perfil del harness (`~/.dsh/profiles/legal/cordis.patch.yml`) van dos filas:
+`crm` y `open_legal_chile`; las herramientas llegan al modelo como `mcp__crm__*` y
+`mcp__open_legal_chile__*`.
+
 ## Entregar el expediente a la IA
 
 El flujo está pensado para que análisis con IA sea **demostrable**: autorización
