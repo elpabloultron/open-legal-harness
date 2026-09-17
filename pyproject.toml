@@ -16,6 +16,7 @@ dependencies = []
 # Postgres (modo oficina) es opcional: solo se requiere el driver.
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.1"]
+ui = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
 
 [project.scripts]
 openlegal = "openlegal.cli:main"

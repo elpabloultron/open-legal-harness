@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CRM Jurídico</title>
+    <link rel="stylesheet" href="/panel.css" />
+  </head>
+  <body>
+    <header class="cabecera">
+      <div class="marca">⚖️ CRM Jurídico</div>
+      <div class="estudio" id="estudio">cargando…</div>
+    </header>
+
+    <nav class="pestanas" id="pestanas">
+      <button class="pestana activa" data-vista="vencimientos">Plazos</button>
+      <button class="pestana" data-vista="causas">Causas</button>
+      <button class="pestana" data-vista="agenda">Agenda</button>
+      <button class="pestana" data-vista="panel">Panel</button>
+      <button class="pestana" data-vista="nuevo">+ Plazo</button>
+    </nav>
+
+    <main id="vista" class="vista"><p class="cargando">cargando…</p></main>
+    <footer class="pie" id="pie"></footer>
+
+    <script src="/panel.js"></script>
+  </body>
+</html>

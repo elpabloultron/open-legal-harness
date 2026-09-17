@@ -1,0 +1,108 @@
+/* Panel del CRM: pensado para vivir en el sidebar derecho del harness (columna estrecha). */
+:root {
+  --tinta: #e8ecf3;
+  --tinta-suave: #98a2b8;
+  --fondo: #0b0f17;
+  --fondo-alto: #121826;
+  --borde: #1f2937;
+  --acento: #4f8cf7;
+  --alerta: #f2b23b;
+  --critico: #ef5b5b;
+  --ok: #46c98b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--tinta);
+  font: 13px/1.5 -apple-system, "Segoe UI", Inter, Roboto, system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.cabecera {
+  padding: 10px 12px 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  justify-content: space-between;
+}
+.marca { font-weight: 600; }
+.estudio { color: var(--tinta-suave); font-size: 11px; text-align: right; }
+.pestanas {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--borde);
+  flex-wrap: wrap;
+}
+.pestana {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--tinta-suave);
+  padding: 7px 9px;
+  font: inherit;
+  cursor: pointer;
+}
+.pestana:hover { color: var(--tinta); }
+.pestana.activa { color: var(--tinta); border-bottom-color: var(--acento); }
+.vista { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.pie { color: var(--tinta-suave); font-size: 11px; padding: 6px 12px; border-top: 1px solid var(--borde); }
+.cargando, .vacio { color: var(--tinta-suave); }
+.tarjeta {
+  background: var(--fondo-alto);
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  padding: 9px 10px;
+  margin-bottom: 8px;
+}
+.tarjeta h3 { margin: 0 0 2px; font-size: 13px; font-weight: 600; }
+.meta { color: var(--tinta-suave); font-size: 11px; }
+.etiqueta {
+  display: inline-block;
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10px;
+  color: var(--tinta-suave);
+  margin-right: 4px;
+}
+.fatal { color: var(--critico); border-color: var(--critico); }
+.pronto { color: var(--alerta); border-color: var(--alerta); }
+.ok { color: var(--ok); border-color: var(--ok); }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--borde); }
+th { color: var(--tinta-suave); font-weight: 500; }
+button.accion {
+  background: var(--fondo-alto);
+  color: var(--tinta);
+  border: 1px solid var(--borde);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+button.accion:hover { border-color: var(--acento); }
+form { display: grid; gap: 8px; }
+label { display: grid; gap: 3px; font-size: 11px; color: var(--tinta-suave); }
+input, select {
+  background: var(--fondo-alto);
+  border: 1px solid var(--borde);
+  border-radius: 6px;
+  color: var(--tinta);
+  padding: 6px 8px;
+  font: inherit;
+}
+.detalle { margin-top: 8px; }
+.detalle tr.festivo td { color: var(--tinta-suave); }
+.aviso {
+  border: 1px solid var(--alerta);
+  color: var(--alerta);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.resultado { font-weight: 600; margin-top: 6px; }

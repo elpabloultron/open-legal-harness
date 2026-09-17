@@ -11,6 +11,7 @@
   openlegal agenda --dias 15
   openlegal panel
   openlegal auditoria
+  openlegal serve --host 127.0.0.1 --port 8899   # panel web (CRM en el sidebar del harness)
 """
 from __future__ import annotations
 
@@ -241,6 +242,33 @@ def cmd_auditoria(args) -> None:
     )
 
 
+def cmd_audiencia_crear(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    audiencia_id = service.crear_audiencia(
+        db, usuario, args.causa, args.tipo, args.fecha, args.hora,
+        modalidad=args.modalidad, lugar_o_url=args.lugar,
+    )
+    print(f"audiencia {audiencia_id} creada: {args.tipo} {args.fecha} {args.hora or ''}".strip())
+
+
+def cmd_serve(args) -> None:
+    try:
+        import uvicorn
+    except ModuleNotFoundError:
+        salida_error("falta el servidor web: instala con `pip install 'open-legal-crm[ui]'`")
+    from .web import crear_app
+
+    app = crear_app(getattr(args, "db", None), args.token)
+    url = f"http://{args.host}:{args.port}/?token={app.state.token}"
+    print("\nCRM Jurídico en marcha")
+    print(f"  panel:  {url}")
+    print(f"  base:   {app.state.db_url or '(por defecto)'}")
+    print("  el token es local; el servicio solo escucha en el host indicado\n")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="openlegal", description="Harness legal chileno con CRM")
     parser.add_argument("--db", help="URL de la base: sqlite:///ruta.db o postgresql://...")
@@ -349,6 +377,25 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--limite", type=int, default=25)
     p.add_argument("--estudio", type=int)
     p.set_defaults(func=cmd_auditoria)
+
+    p = sub.add_parser("audiencia", help="audiencias")
+    sub_a = p.add_subparsers(dest="accion", required=True)
+    pa = sub_a.add_parser("crear")
+    pa.add_argument("--causa", type=int, required=True)
+    pa.add_argument("--tipo", required=True)
+    pa.add_argument("--fecha", required=True, help="YYYY-MM-DD")
+    pa.add_argument("--hora")
+    pa.add_argument("--modalidad", default="presencial", choices=["presencial", "remota", "hibrida"])
+    pa.add_argument("--lugar", help="sala o URL de la audiencia remota")
+    pa.add_argument("--usuario")
+    pa.add_argument("--estudio", type=int)
+    pa.set_defaults(func=cmd_audiencia_crear)
+
+    p = sub.add_parser("serve", help="panel web del CRM (para el sidebar del harness)")
+    p.add_argument("--host", default="127.0.0.1", help="host de escucha (por defecto solo local)")
+    p.add_argument("--port", type=int, default=8899)
+    p.add_argument("--token", help="token del panel; si se omite se genera uno")
+    p.set_defaults(func=cmd_serve)
     return parser
 
 
