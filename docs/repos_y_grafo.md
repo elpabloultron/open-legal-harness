@@ -131,7 +131,27 @@ El harness **sobrevive solo porque lanza el MCP con `cwd=open-legal-chile`**. Si
 
 **4. `numpy` y PageRank: RESUELTO.** `numpy` y `scipy` son dependencias declaradas; el ranking es PageRank real y el payload declara `ordenado_por`, avisando cuando no puede calcularlo. El ranking **cambió** (antes: Cumplimiento Forzado, Reivindicación, Tutela Laboral; ahora: Responsabilidad Extracontractual, Daño Reparable, Dolo Civil) porque el 83 % de los nodos no tiene aristas de salida: PageRank y grado no ordenan igual, y por eso cada entrada trae las dos métricas.
 
-**5. El fork de `graphify`: NO se mantiene.** Es una herramienta de terceros (0.9.63, publicada en PyPI como `graphifyy`) y este proyecto solo **consume** su salida; su commit de showcase quedó **36 commits atrás con historia divergente** y llevaba dentro las cifras falsas (85-95 %, «55 herramientas»), así que enviarlo upstream habría publicado justo lo corregido. El contenido se reescribió con los números medidos en `open-legal-chile/docs/integracion_graphify.md`, que es donde documenta algo propio. Si algún día se quiere reconocimiento en el proyecto original, corresponde un PR corto y factual basado en `upstream/main` — nunca el commit actual.
+**5. El fork de `graphify`: NO se mantiene, y el aporte se hizo donde corresponde.** Es una
+herramienta de terceros (0.9.63, publicada en PyPI como `graphifyy`) y este proyecto solo
+**consume** su salida. El showcase original **no se envió**: llevaba las cifras falsas (85-95 %,
+«55 herramientas») y el fork está 36 commits atrás con historia divergente. En su lugar se siguió
+**su propia guía de contribución**, que pide otra cosa: *«Worked examples are the most useful
+contribution. Run `/graphify` on a real corpus, save the output to `worked/{slug}/`, write an
+honest `review.md` covering what the graph got right and wrong»*. Resultado:
+
+- **PR [Graphify-Labs/graphify#3662](https://github.com/Graphify-Labs/graphify/pull/3662)** → base
+  **`v8`** (su rama de desarrollo activa, como indican sus reglas), rama
+  `docs/worked-example-civil-law-chile` en el fork, 11 archivos.
+- Contenido: `worked/civil-law-chile/` con el corpus real (4 módulos Python + 4 documentos legales
+  chilenos en español, 8 archivos / ~3.010 palabras), la corrida de `graphify update .` en 0.9.63
+  **solo AST** (sin LLM, 0 tokens: 72 nodos / 91 aristas / 9 comunidades) y el `review.md` honesto.
+- Lo que el review reporta, incluido lo incómodo: los documentos aportan 21 nodos `document` y 3
+  guías entre los god nodes **sin gastar un token**, y una consulta en inglés aterriza en un
+  encabezado en español; pero las preguntas sustantivas de abogado llegan **al documento, no a la
+  regla**, el veredicto de tamaño de corpus contradice a su propio ejemplo hermano (3.010 palabras
+  «aporta valor» vs 4.020 «cabe en una ventana»), y los encabezados con emoji quedan literales en
+  las etiquetas. Un aporte así sirve; un bloque publicitario con cifras infladas, no.
+
 
 ## El agujero que apareció al verificar el paquete publicado
 
