@@ -77,6 +77,22 @@ herramienta**.
     que **tu recuerdo está desactualizado** —y el memo debe decir eso—, no inventariar registros
     que ya no están. Una contradicción entre lo que crees y lo que devuelve la herramienta es un
     hallazgo para el abogado, no un detalle a racionalizar.
+13. **Declara en `terminos` los nombres que aparecen en el documento, y revisa lo que devuelve el
+    minimizador.** `crm_ia_redactar` enmascara RUT, correos, teléfonos y los nombres que se le
+    declaren: los de la ficha de la causa **y los que están dentro del expediente** (partes,
+    representantes, testigos), que el CRM no conoce. Después de minimizar, **lee el resultado**: si
+    ves un nombre propio a la vista, agrégalo a `terminos` y vuelve a minimizar. Un `redactado:
+    true` sobre un texto que todavía muestra un nombre es un registro falso.
+14. **Verifica la regla de días hábiles antes de confiar en la fecha, y nunca la escondas.**
+    El cálculo devuelve `regla_dias_habiles` (por defecto: lunes a sábado, con domingos y feriados
+    suspendidos). Si el criterio que necesita la causa es otro —el procedimiento administrativo de
+    la Ley 19.880 no cuenta sábados—, pásalo en `sabado_habil: false` y **dilo en el informe**: la
+    diferencia es de días y puede cambiar el vencimiento. Elegir el criterio es del abogado; tú
+    tienes que mostrarle que existe la elección y cuál aplicaste.
+15. **No uses una causa real para probar herramientas.** Si quieres comprobar que una herramienta
+    funciona, no crees registros de prueba en la causa del cliente: un duplicado que después hay
+    que cancelar es trabajo y ruido en la agenda. Pregunta o usa `crm_plazo_calcular`, que no
+    escribe nada.
 
 ## Pasos
 
@@ -120,6 +136,9 @@ herramienta**.
   misma corrida.
 - No descartar una respuesta de herramienta que contradiga tu relato («raro pero no crítico»):
   o la verificas, o la informas como contradicción.
+- No dejar sin declarar un nombre propio que aparezca en el documento: si quedó a la vista del
+  modelo, la minimización no se hizo.
+- No probar herramientas creando registros en una causa real.
 - No mandar el expediente completo si basta el texto minimizado.
 - No usar terminología de common law (discovery, at-will, punitive damages): es derecho chileno.
 - No cerrar la tarea sin dejar el resumen para la revisión del abogado.
