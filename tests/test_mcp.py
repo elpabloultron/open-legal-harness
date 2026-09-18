@@ -389,5 +389,57 @@ class TestErroresDeArgumento(BaseMCP):
         self.assertIn("tools", respuestas[-1]["result"])
 
 
+class TestAuditoria(BaseMCP):
+    """La procedencia tiene que ser consultable, no adivinable.
+
+    El agente ya atribuyó dos veces un plazo viejo al OCR de la sesión. La
+    bitácora tiene el dato; ahora tiene herramienta para leerlo.
+    """
+
+    def test_la_bitacora_dice_quien_creo_el_plazo_y_cuando(self):
+        creado, _ = self.llamar(
+            "crm_plazo_crear", causa_id=self.causa, descripcion="Contestar demanda",
+            dias=8, notificacion="2026-09-17",
+        )
+        datos, error = self.llamar(
+            "crm_auditoria_leer", entidad="plazos", entidad_id=creado["plazo_id"]
+        )
+        self.assertFalse(error)
+        self.assertEqual(datos["total"], 1)
+        self.assertEqual(datos["creado_por"], "Sofía Soto")
+        self.assertEqual(datos["eventos"][0]["accion"], "plazo.crear")
+        self.assertTrue(datos["creado_en"])
+
+        self.llamar("crm_plazo_cancelar", plazo_id=creado["plazo_id"], motivo="duplicado")
+        completa, _ = self.llamar(
+            "crm_auditoria_leer", entidad="plazos", entidad_id=creado["plazo_id"]
+        )
+        self.assertEqual([e["accion"] for e in completa["eventos"]], ["plazo.crear", "plazo.cancelar"])
+        self.assertIn("duplicado", completa["eventos"][1]["detalle"])
+
+    def test_registro_sin_bitacora_lo_dice_en_vez_de_inventar(self):
+        datos, error = self.llamar("crm_auditoria_leer", entidad="plazos", entidad_id=999)
+        self.assertFalse(error)
+        self.assertEqual(datos["total"], 0)
+        self.assertIn("no lo atribuyas", datos["aviso"].lower())
+
+    def test_un_rol_sin_permiso_no_lee_la_bitacora_de_la_ia(self):
+        secretaria_id = auth.crear_usuario(
+            self.db, self.estudio, "Carmen Díaz", "carmen2@mcp.cl", "administrativo", "clave"
+        )
+        service.asignar(self.db, self.socio, self.causa, secretaria_id, "paralegal")
+        contexto = Contexto(self.url, "carmen2@mcp.cl")
+        respuesta = responder({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "crm_auditoria_leer",
+                       "arguments": {"entidad": "transferencias_ia", "entidad_id": 1}},
+        }, contexto)
+        self.assertTrue(respuesta["result"]["isError"])
+        self.assertIn("auditoria.leer", respuesta["result"]["content"][0]["text"])
+
+    def test_la_herramienta_se_anuncia(self):
+        self.assertIn("crm_auditoria_leer", {h["name"] for h in HERRAMIENTAS})
+
+
 if __name__ == "__main__":
     unittest.main()

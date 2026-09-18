@@ -283,6 +283,24 @@ HERRAMIENTAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "crm_auditoria_leer",
+        "description": (
+            "Lee la bitácora de un registro concreto (plazos, audiencias, documentos, "
+            "transferencias_ia). Devuelve quién lo creó, cuándo, y cada cambio con su motivo. "
+            "Úsalo ANTES de atribuir un error a un documento: si `creado_en` es anterior al "
+            "inicio de tu sesión, ese registro no lo creó la lectura que estás haciendo."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entidad": {"type": "string", "description": "Nombre de la tabla, ej. 'plazos'"},
+                "entidad_id": {"type": "integer"},
+                "limite": {"type": "integer", "default": 25},
+            },
+            "required": ["entidad", "entidad_id"],
+        },
+    },
+    {
         "name": "crm_ia_estado",
         "description": "Dice si la causa está autorizada para tratarse con IA y qué términos conviene minimizar.",
         "inputSchema": {
@@ -515,6 +533,40 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
             documento_id, f"causa={causa_id} {argumentos['nombre']}",
         )
         return {"documento_id": documento_id}
+
+    if nombre == "crm_auditoria_leer":
+        entidad = str(argumentos.get("entidad") or "").strip()
+        if not entidad:
+            raise ErrorArgumento(
+                "'entidad' es obligatorio y es el nombre de la tabla: 'plazos', 'audiencias', "
+                "'documentos' o 'transferencias_ia'."
+            )
+        entidad_id = entero(argumentos.get("entidad_id"), "entidad_id", minimo=1)
+        limite = entero(argumentos.get("limite") or 25, "limite", minimo=1)
+        permiso = {"plazos": "plazo.leer", "audiencias": "audiencia.leer"}.get(entidad, "auditoria.leer")
+        auth.exigir(db, usuario, permiso)
+        eventos = db.todos(
+            "SELECT a.id, a.accion, a.detalle, a.creado_en, u.nombre AS usuario, u.rol AS rol "
+            "FROM auditoria a LEFT JOIN usuarios u ON u.id = a.usuario_id "
+            "WHERE a.entidad = ? AND a.entidad_id = ? AND a.estudio_id = ? "
+            "ORDER BY a.id LIMIT ?",
+            (entidad, entidad_id, usuario["estudio_id"], limite),
+        )
+        if not eventos:
+            return {
+                "entidad": entidad, "entidad_id": entidad_id, "total": 0,
+                "aviso": "Sin eventos en la bitácora: el registro no existe o lo creó una carga "
+                         "externa al CRM. No lo atribuyas a la lectura que estás haciendo.",
+            }
+        primero = eventos[0]
+        return {
+            "entidad": entidad,
+            "entidad_id": entidad_id,
+            "total": len(eventos),
+            "creado_en": primero["creado_en"],
+            "creado_por": primero["usuario"],
+            "eventos": eventos,
+        }
 
     if nombre == "crm_ia_estado":
         return service.estado_ia(db, usuario, int(argumentos["causa_id"]))

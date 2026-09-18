@@ -38,17 +38,28 @@ herramienta**.
    el abogado ya no sabe cuál seguir. El motivo queda en la bitácora: escríbelo como se lo
    explicarías a un tercero.
 7. **Antes de culpar a un plazo, mira su `creado_en`.** `crm_plazo_listar` devuelve `creado_en`,
-   `estado` y `responsable_id`. Un plazo anterior al inicio de tu sesión lo creó otra persona (o
-   una carga de datos): no lo atribuyas al documento que estás leyendo. Si la coincidencia entre
-   un plazo viejo y un error de lectura te parece sospechosa, es una hipótesis, no un hecho:
-   preséntala como hipótesis.
+   `estado` y `responsable_id`, y `crm_auditoria_leer` dice quién lo creó, cuándo y con qué
+   motivo. Un plazo anterior al inicio de tu sesión lo creó otra persona (o una carga de datos):
+   no lo atribuyas al documento que estás leyendo. Si la coincidencia entre un plazo viejo y un
+   error de lectura te parece sospechosa, es una hipótesis, no un hecho: preséntala como hipótesis,
+   o mejor, verifícala con la bitácora antes de escribirla.
 8. **Verifica que la resolución sea coherente con el procedimiento.** Si el proveído ordena algo
    que no calza con la materia (por ejemplo, un traslado de días hábiles al estilo civil en un
    procedimiento laboral, donde la contestación se rige por los arts. 451 y 452 del Código del
    Trabajo), **no lo cargues en silencio**: crea el plazo si el documento lo manda, y advierte la
    anomalía aparte, indicando qué norma habría que aplicar. Antes de eso, contrasta con
-   `mcp__open_legal_chile__bcn_get_codigo`. Igual con las audiencias: si la resolución no fija
-   ninguna, no inventes fecha — pregunta si falta un escrito en el expediente.
+   `mcp__open_legal_chile__bcn_get_codigo` (ojo: el código se llama `trabajo`, no «Código del
+   Trabajo»). Igual con las audiencias: si la resolución no fija ninguna, no inventes fecha —
+   pregunta si falta un escrito en el expediente.
+9. **Registra el envío a la IA en cada corrida, y cita el registro que acabas de crear.** Si el
+   texto del expediente llegó al modelo en esta sesión, `crm_ia_registrar` se llama en esta sesión
+   y el informe muestra el *id nuevo*. Nunca presentes el hash de un envío anterior como si fuera
+   el de ahora, aunque el texto minimizado sea el mismo y el hash calce: el registro de
+   transferencias es la prueba de que el envío ocurrió, no un dato decorativo.
+10. **No dupliques un plazo que ya está bien.** Antes de crear, compara con los pendientes de la
+    causa: si ya existe uno con los mismos días y la misma fecha de notificación, **no crees otro**
+    —dilo («ya estaba cargado y coincide»). Cancelar uno correcto para crear un idéntico deja la
+    bitácora llena de ruido y le hace perder tiempo al abogado.
 
 ## Pasos
 
