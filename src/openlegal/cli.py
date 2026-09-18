@@ -575,6 +575,16 @@ def cmd_seguridad(args) -> None:
     db = _ctx(args)
     estudio_id = _estudio_actual(db, args.estudio)
     usuario = _usuario_actual(db, estudio_id, args.usuario)
+
+    if getattr(args, "desbloquear", None):
+        estado = auth.desbloquear(db, usuario, args.desbloquear)
+        if estado["bloqueada"]:
+            print(f"{args.desbloquear}: sigue bloqueada, faltan {estado['faltan_minutos']} minuto(s)")
+        else:
+            print(f"{args.desbloquear}: cuenta destrabada (queda anotado quién la destrabó)")
+        db.cerrar()
+        return
+
     informe = seguridad.intentos_fallidos(db, minutos=args.minutos, estudio_id=estudio_id)
     print(f"intentos fallidos en los últimos {informe['ventana_minutos']} minutos: {informe['total']}")
     if informe["por_cuenta"]:
@@ -589,6 +599,12 @@ def cmd_seguridad(args) -> None:
         print("nadie ha fallado: o no hubo intentos, o todos entraron")
     elif informe["sospechoso"]:
         print(f"AVISO: pasó el umbral de {informe['umbral']} intentos. Revisa quién y desde dónde.")
+    # El bloqueo no se deduce de la alerta: la alerta es del estudio, el bloqueo es de la
+    # cuenta. Se dicen aparte para que no se confundan.
+    bloqueadas = [c for c in informe["por_cuenta"] if seguridad.bloqueo(db, c)["bloqueada"]]
+    if bloqueadas:
+        print(f"bloqueadas ahora mismo: {', '.join(bloqueadas)}")
+        print("  (se destraban solas; 'openlegal seguridad --desbloquear correo' las destraba ya)")
     # El estado del segundo factor completa el cuadro: un estudio con socios sin 2FA es
     # una puerta abierta, y se dice acá en vez de esperar a que alguien se acuerde.
     faltantes = [f for f in auth.estado_segundo_factor(db, usuario) if f["esperado"] and not f["totp_activo"]]
@@ -745,8 +761,9 @@ def construir_parser() -> argparse.ArgumentParser:
     pu.add_argument("--estudio", type=int)
     pu.set_defaults(func=cmd_usuario_2fa)
 
-    p = sub.add_parser("seguridad", help="accesos: intentos fallidos y estado del segundo factor")
+    p = sub.add_parser("seguridad", help="intentos fallidos, bloqueos y estado del segundo factor")
     p.add_argument("--minutos", type=int, default=15)
+    p.add_argument("--desbloquear", help="correo de la cuenta a destrabar ahora mismo")
     p.add_argument("--usuario", help="email del usuario que ejecuta")
     p.add_argument("--estudio", type=int)
     p.set_defaults(func=cmd_seguridad)

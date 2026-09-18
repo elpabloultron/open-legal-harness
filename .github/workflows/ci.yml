@@ -129,3 +129,24 @@ jobs:
           npm run build
           npm test
           npm run typecheck
+
+  oficina:
+    name: los guiones de la oficina (instalación y respaldo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Todos los guiones tienen que ser bash válido
+        run: |
+          for guion in scripts/*.sh; do
+            bash -n "$guion" || { echo "✗ $guion no es bash válido"; exit 1; }
+            echo "  ✓ $guion"
+          done
+      - name: Instalar el CRM (el instalador usa el comando openlegal)
+        run: python -m pip install --quiet -e .
+      - name: El respaldo tiene que servir: copia consistente, rotación y base que no existe
+        run: python scripts/prueba_respaldo.py
+      - name: El instalador de oficina escribe sus servicios y es idempotente
+        run: python scripts/prueba_instalador.py

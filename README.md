@@ -291,6 +291,19 @@ punta a punta con `python3 scripts/e2e_avisos.py` (levanta un servidor de correo
 **No le avisa al cliente**: los avisos son internos del estudio. Comunicarle a un cliente que
 su plazo vence es un acto profesional responsable, y no se automatiza por accidente.
 
+## El CRM en la oficina
+
+El CRM se instala **en un equipo del estudio** y los demás entran por el navegador: no hay que
+repartir la base ni sincronizar archivos. Un comando deja el panel, los avisos y el respaldo
+nocturno andando como servicios:
+
+```bash
+bash scripts/instalar_oficina.sh --db "sqlite://$HOME/.openlegal/estudio.db"
+```
+
+Guía completa —direcciones que se reparten, seguridad antes de que lo use el equipo, respaldos
+con cifrado y problemas frecuentes— en [docs/oficina.md](docs/oficina.md).
+
 ## Demostración local (SQLite, sin Docker)
 
 ```bash

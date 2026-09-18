@@ -229,8 +229,13 @@ class TestAccesosAnomalos(BaseConEstudio):
         self.assertIn("nadie@test.cl", entradas[0]["detalle"])
 
     def test_el_informe_cuenta_por_cuenta_y_avisa_pasado_el_umbral(self):
+        # Los fallos se anotan directo en la bitácora a propósito: desde que existe el
+        # bloqueo, una misma cuenta no puede llegar a este umbral probando contraseñas
+        # (a los 8 intentos se bloquea), y lo que esta prueba mide es el informe, no el
+        # bloqueo — que tiene sus propias pruebas.
         for _ in range(seguridad.UMBRAL_INTENTOS):
-            auth.autenticar(self.db, "socia@test.cl", "no-es-la-clave")
+            auth.auditar(self.db, self.estudio, None, "login.fallido", "usuarios", None,
+                         "socia@test.cl · contraseña incorrecta")
 
         informe = seguridad.intentos_fallidos(self.db, minutos=15, estudio_id=self.estudio)
 

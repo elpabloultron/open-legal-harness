@@ -77,6 +77,15 @@ class ErrorSegundoFactor(ValueError):
     """
 
 
+class ErrorBloqueado(PermissionError):
+    """La cuenta está bloqueada por intentos fallidos: no hay sesión, ni con la clave buena.
+
+    Se distingue de `ErrorPermiso` porque no es falta de permisos sino un bloqueo temporal
+    que se destraba solo: quien lo lee tiene que saber que el problema es el tiempo, no su
+    rol en el estudio.
+    """
+
+
 # --------------------------------------------------------------------- claves
 def hash_password(password: str) -> str:
     sal = os.urandom(16)
@@ -200,8 +209,22 @@ def autenticar(db: DB, email: str, password: str, codigo: str | None = None) -> 
     """Verifica credenciales y, si el usuario tiene segundo factor, también el código.
 
     Falla cerrado: si el segundo factor está activo y no llega un código válido, no hay
-    sesión — ni siquiera con la contraseña correcta.
+    sesión — ni siquiera con la contraseña correcta. Lo mismo si la cuenta está bloqueada
+    por intentos fallidos: el bloqueo vale también para quien acierta la clave, que es lo
+    único que lo hace útil contra alguien que prueba contraseñas.
     """
+    estado = seguridad.bloqueo(db, email)
+    if estado["bloqueada"]:
+        # Se anota, pero con una acción distinta: un intento bloqueado no puede sumar al
+        # conteo que decide el bloqueo, o la cuenta no se destrabaría nunca sola.
+        auditar(
+            db, None, None, "login.bloqueado", "usuarios", None,
+            f"{email.lower()} · faltan {estado['faltan_minutos']} minuto(s) de bloqueo",
+        )
+        raise ErrorBloqueado(
+            f"cuenta bloqueada por intentos fallidos: vuelve a intentarlo en "
+            f"{estado['faltan_minutos']} minuto(s) o pide que la destraben"
+        )
     usuario = db.uno("SELECT * FROM usuarios WHERE email = ? AND activo = 1", (email.lower(),))
     if not usuario or not usuario["password_hash"]:
         # El intento fallido deja rastro aunque la cuenta no exista: es la mitad de la
@@ -286,6 +309,24 @@ def estado_segundo_factor(db: DB, actor: dict) -> list[dict]:
         {**dict(fila), "esperado": fila["rol"] in ("socio", "administrador")}
         for fila in filas
     ]
+
+
+def desbloquear(db: DB, actor: dict, email: str) -> dict:
+    """Destraba una cuenta a mano: la secretaria que se equivocó ocho veces, por ejemplo.
+
+    Queda en la bitácora como `login.desbloqueado` y desde ahí se vuelven a contar los
+    fallos — no se borra nada, se marca el corte.
+    """
+    exigir(db, actor, "usuario.gestionar")
+    cuenta = (email or "").strip().lower()
+    if not cuenta:
+        raise ValueError("indica el correo de la cuenta a destrabar")
+    usuario = db.uno("SELECT id FROM usuarios WHERE email = ?", (cuenta,))
+    auditar(
+        db, actor["estudio_id"], actor["id"], "login.desbloqueado", "usuarios",
+        usuario["id"] if usuario else None, f"{cuenta} · destrabada a mano",
+    )
+    return seguridad.bloqueo(db, cuenta)
 
 
 def usuario_por_token(db: DB, token: str) -> dict | None:

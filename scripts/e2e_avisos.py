@@ -148,7 +148,7 @@ print("  " + cli("notificar", "--usuario", "socia@test.cl", "--generar", "--envi
 
 print("\n=== 4. los correos que llegaron al servidor de verdad ===")
 for numero, mensaje in enumerate(ManejadorSMTP.recibidos, 1):
-    asunto = [l for l in mensaje["cuerpo"].splitlines() if l.lower().startswith("subject:")]
+    asunto = [linea for linea in mensaje["cuerpo"].splitlines() if linea.lower().startswith("subject:")]
     print(f"  --- correo {numero} ---")
     print(f"  de:      {mensaje['de']}")
     print(f"  para:    {' '.join(mensaje['para'])}")

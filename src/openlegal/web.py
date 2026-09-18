@@ -179,6 +179,9 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
                 usuario = auth.autenticar(db, datos.email, datos.password, datos.codigo)
             except auth.ErrorSegundoFactor as exc:
                 raise HTTPException(status_code=401, detail=str(exc)) from exc
+            except auth.ErrorBloqueado as exc:
+                # 429: no es que las credenciales estén mal, es que hay que esperar.
+                raise HTTPException(status_code=429, detail=str(exc)) from exc
             if not usuario:
                 raise HTTPException(status_code=401, detail="correo o contraseña incorrectos")
             token_sesion = usuario.pop("token")

@@ -40,6 +40,12 @@ VENTANA = 1
 #: Cuántos intentos fallidos en la ventana hacen sospechar un ataque.
 UMBRAL_INTENTOS = 10
 
+#: Intentos fallidos de una misma cuenta que la bloquean, y por cuánto tiempo.
+BLOQUEO_INTENTOS = 8
+BLOQUEO_MINUTOS = 15
+#: Ventana en la que se cuentan los intentos para decidir el bloqueo.
+BLOQUEO_VENTANA = 15
+
 
 # ------------------------------------------------------------------------ TOTP
 def nuevo_secreto(largo: int = 20) -> str:
@@ -101,6 +107,70 @@ def uri_otpauth(secreto: str, email: str, emisor: str = "Open Legal Harness") ->
 def _sello(momento: dt.datetime) -> str:
     """El mismo formato con que SQLite guarda `CURRENT_TIMESTAMP` (UTC, con espacio)."""
     return momento.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def patron_de_cuenta(email: str) -> str:
+    """El patrón de bitácora de una cuenta, con los comodines de LIKE escapados.
+
+    Un correo corporativo lleva guión bajo (`juan_perez@…`) y en LIKE el `_` comodina un
+    carácter cualquiera: sin escapar, el bloqueo de una cuenta alcanzaría a otra parecida.
+    """
+    limpio = (email or "").strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"{limpio} ·%"
+
+
+def bloqueo(db: DB, email: str, ahora: dt.datetime | None = None) -> dict:
+    """Si una cuenta está bloqueada por intentos fallidos, y cuánto le falta.
+
+    Todo se calcula desde la bitácora: no hay contador aparte que se pueda desincronizar de
+    lo que realmente pasó. Se cuentan los fallos de esa cuenta en la ventana, y si llegan al
+    umbral no se acepta ninguna sesión hasta que pase el tiempo desde el **último** fallo —
+    incluso con la contraseña correcta: un bloqueo que se saltea sabiendo la clave no sirve
+    de nada. Pasado el tiempo, la cuenta se destraba sola.
+
+    Desbloquear a mano (cuando la secretaria se equivocó ocho veces) deja un
+    `login.desbloqueado` en la bitácora, y desde ahí se cuentan de nuevo los fallos.
+    """
+    ahora = ahora or dt.datetime.now(dt.timezone.utc)
+    patron = patron_de_cuenta(email)
+    if not (email or "").strip():
+        return {"bloqueada": False, "intentos": 0, "faltan_minutos": 0, "hasta": None}
+
+    desde = _sello(ahora - dt.timedelta(minutes=BLOQUEO_VENTANA))
+    condiciones = ["accion IN ('login.fallido', 'login.2fa.fallido')", "creado_en >= ?", "detalle LIKE ? ESCAPE '\\'"]
+    parametros: list[object] = [desde, patron]
+    # El corte del desbloqueo se toma por número de fila y no por marca de tiempo: la
+    # bitácora tiene precisión de segundos, así que un desbloqueo hecho en el mismo segundo
+    # que el último fallo dejaría la cuenta bloqueada igual.
+    manual = db.uno(
+        "SELECT id FROM auditoria WHERE accion = 'login.desbloqueado' AND detalle LIKE ? ESCAPE '\\' "
+        "ORDER BY id DESC",
+        (patron,),
+    )
+    if manual:
+        condiciones.append("id > ?")
+        parametros.append(manual["id"])
+
+    filas = db.todos(
+        f"SELECT creado_en FROM auditoria WHERE {' AND '.join(condiciones)} ORDER BY id DESC",
+        tuple(parametros),
+    )
+    intentos = len(filas)
+    if intentos < BLOQUEO_INTENTOS:
+        return {"bloqueada": False, "intentos": intentos, "faltan_minutos": 0, "hasta": None}
+
+    ultimo = dt.datetime.strptime(str(filas[0]["creado_en"])[:19], "%Y-%m-%d %H:%M:%S").replace(
+        tzinfo=dt.timezone.utc
+    )
+    destrabe = ultimo + dt.timedelta(minutes=BLOQUEO_MINUTOS)
+    if ahora >= destrabe:
+        return {"bloqueada": False, "intentos": intentos, "faltan_minutos": 0, "hasta": None}
+    return {
+        "bloqueada": True,
+        "intentos": intentos,
+        "faltan_minutos": max(1, round((destrabe - ahora).total_seconds() / 60)),
+        "hasta": _sello(destrabe),
+    }
 
 
 def intentos_fallidos(
