@@ -13,6 +13,10 @@ dist/
 .venv/
 venv/
 
+# plugins de dsh (los node_modules se enlazan en desarrollo, no se versionan)
+node_modules/
+node_modules
+
 # sistemas operativos
 .DS_Store
 Thumbs.db

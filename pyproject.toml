@@ -26,6 +26,13 @@ openlegal-crm = "openlegal.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+# Los datos sin los que el paquete no funciona: el esquema, el calendario de feriados
+# (de donde salen los dias habiles del art. 66 CPC) y el panel del CRM. Sin esto el
+# wheel instala una CLI que no puede crear su base ni levantar su interfaz.
+include-package-data = true
+
+[tool.setuptools.package-data]
+openlegal = ["schema.sql", "feriados_cl.json", "static/*.html", "static/*.css", "static/*.js"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
