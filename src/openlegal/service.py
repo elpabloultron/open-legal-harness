@@ -5,6 +5,8 @@ Cada funcion que escribe pasa por `auth.exigir` y deja rastro en `auditoria`.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import pathlib
 
 from . import auth, ia, plazos
 from .db import DB
@@ -471,6 +473,81 @@ def transferencias_ia(db: DB, usuario: dict, causa_id: int | None = None) -> lis
         f"WHERE t.causa_id IN ({marcadores}) ORDER BY t.id DESC LIMIT 50",
         tuple(sorted(visibles)),
     )
+
+
+# ---------------------------------------------------------------- documentos
+def registrar_documento(
+    db: DB,
+    usuario: dict,
+    causa_id: int,
+    nombre: str,
+    ruta: str | None = None,
+    tipo: str | None = None,
+    visibilidad: str = "interno",
+) -> int:
+    """Registra un documento del expediente y le calcula el hash de integridad.
+
+    El hash se guarda al momento de incorporarlo: es lo que después permite demostrar
+    que el escrito que está en el archivo es el mismo que se incorporó. Si el archivo no
+    está (se registra la referencia y el papel se guarda aparte), queda sin hash y se
+    dice, en vez de dejar un campo vacío que parezca verificado.
+    """
+    auth.exigir(db, usuario, "documento.crear", causa_id)
+    datos = {
+        "causa_id": causa_id,
+        "nombre": nombre,
+        "ruta": ruta,
+        "tipo": tipo,
+        "visibilidad": visibilidad,
+        "subido_por": usuario["id"],
+    }
+    if ruta:
+        archivo = pathlib.Path(ruta)
+        if archivo.is_file():
+            contenido = archivo.read_bytes()
+            datos["hash_sha256"] = hashlib.sha256(contenido).hexdigest()
+            datos["bytes"] = len(contenido)
+    documento_id = db.insertar("documentos", datos)
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], "documento.registrar", "documentos", documento_id,
+        f"{nombre} · sha256={datos.get('hash_sha256', '(sin archivo)')}",
+    )
+    return documento_id
+
+
+def verificar_documento(db: DB, usuario: dict, documento_id: int) -> dict:
+    """Vuelve a calcular el hash y dice si el archivo cambió desde que se registró."""
+    fila = db.uno("SELECT * FROM documentos WHERE id = ?", (documento_id,))
+    if not fila:
+        raise ValueError(f"no existe el documento {documento_id}")
+    auth.exigir(db, usuario, "documento.leer", fila["causa_id"])
+
+    ruta = fila.get("ruta")
+    if not ruta or not pathlib.Path(ruta).is_file():
+        return {
+            "documento_id": documento_id, "nombre": fila["nombre"], "estado": "sin_archivo",
+            "detalle": "el registro apunta a un archivo que no está en esta máquina",
+        }
+    contenido = pathlib.Path(ruta).read_bytes()
+    actual = hashlib.sha256(contenido).hexdigest()
+    registrado = fila.get("hash_sha256")
+    if not registrado:
+        return {
+            "documento_id": documento_id, "nombre": fila["nombre"], "estado": "sin_hash_registrado",
+            "detalle": "se incorporó antes de que el CRM calculara hashes; hay que reincorporarlo "
+                       "para poder verificarlo",
+        }
+    estado = "intacto" if actual == registrado else "cambio"
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], f"documento.verificar.{estado}", "documentos",
+        documento_id, f"{fila['nombre']} · sha256={actual}",
+    )
+    return {
+        "documento_id": documento_id, "nombre": fila["nombre"], "estado": estado,
+        "hash_registrado": registrado, "hash_actual": actual, "bytes": len(contenido),
+        "detalle": "coincide con lo incorporado" if estado == "intacto"
+        else "el archivo cambió después de incorporarse al expediente",
+    }
 
 
 # ---------------------------------------------------------------------- panel

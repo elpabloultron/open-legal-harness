@@ -25,7 +25,7 @@ import sys
 from typing import NoReturn
 
 from . import auth, ia, plazos, service, titulares
-from .db import DB
+from .db import DB, MIGRACIONES
 
 
 def _ctx(args):
@@ -485,6 +485,38 @@ def cmd_titular_anonimizar(args) -> None:
         print("  la operación quedó en la bitácora como titular.anonimizar, con su motivo")
 
 
+def cmd_migraciones(args) -> None:
+    # Este comando NO migra, a propósito: si migrara antes de mirar, siempre diría que
+    # está todo al día y no serviría para diagnosticar. El resto de los comandos sí
+    # aplican lo pendiente al abrir la base.
+    db = DB(getattr(args, "db", None))
+    print(f"base: {db.url.split('@')[-1] if '@' in db.url else db.url}")
+    print(f"motor: {db.dialecto}")
+    if "migraciones" not in db.tablas():
+        print("registro: todavía no existe (esta base es anterior a él)")
+        print("se marcará en la 1 y se aplicará lo que falte la primera vez que corras")
+        print("cualquier comando (init, panel, mcp…). Migraciones conocidas:")
+        for version, nombre, _ in MIGRACIONES:
+            print(f"  {version:>3}  {nombre}")
+        db.cerrar()
+        return
+    aplicadas = db.migraciones_aplicadas()
+    pendientes = db.migraciones_pendientes()
+    if aplicadas:
+        print("aplicadas:")
+        for version, fila in sorted(aplicadas.items()):
+            print(f"  {version:>3}  {fila['nombre']}  ({fila['aplicada_en']})")
+    else:
+        print("aplicadas: ninguna")
+    if pendientes:
+        print("pendientes:")
+        for version, nombre in pendientes:
+            print(f"  {version:>3}  {nombre}")
+    else:
+        print("pendientes: ninguna, la base está al día")
+    db.cerrar()
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="openlegal", description="Harness legal chileno con CRM")
     parser.add_argument("--db", help="URL de la base: sqlite:///ruta.db o postgresql://...")
@@ -492,6 +524,10 @@ def construir_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("init", help="crea el esquema en la base")
     p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("migraciones", help="en qué versión está la base y qué falta aplicarle")
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_migraciones)
 
     p = sub.add_parser("estudio", help="estudios")
     sub_e = p.add_subparsers(dest="accion", required=True)

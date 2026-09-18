@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import pathlib
 import sqlite3
+from collections.abc import Callable
 
 RAIZ = pathlib.Path(__file__).resolve().parent
 SCHEMA = RAIZ / "schema.sql"
@@ -101,6 +102,17 @@ class DB:
         return int(cur.lastrowid)
 
     # --------------------------------------------------------------- migracion
+    def tablas(self) -> set[str]:
+        """Nombres de las tablas que existen hoy en la base."""
+        if self.dialecto == "sqlite":
+            return {f["name"] for f in self.todos("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        return {
+            f["table_name"]
+            for f in self.todos(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+            )
+        }
+
     def columnas(self, tabla: str) -> set[str]:
         if self.dialecto == "sqlite":
             return {f["name"] for f in self.todos(f"PRAGMA table_info({tabla})")}
@@ -109,22 +121,75 @@ class DB:
         )
         return {f["column_name"] for f in filas}
 
-    def migrar(self) -> list[str]:
-        """Crea tablas e indices y agrega las columnas nuevas. Idempotente."""
-        ddl = SCHEMA.read_text(encoding="utf-8")
-        sentencias = [s.strip() for s in ddl.split(";") if s.strip() and not set(s.strip()) <= {"-", "\n"}]
-        aplicadas = []
-        for sentencia in sentencias:
-            if sentencia.startswith("--"):
-                sentencia = "\n".join(
-                    linea for linea in sentencia.splitlines() if not linea.strip().startswith("--")
-                ).strip()
-            if not sentencia:
-                continue
-            self.ejecutar(sentencia)
-            encabezado = " ".join(sentencia.split()[:3])
-            aplicadas.append(encabezado)
+    # ------------------------------------------- migraciones versionadas (F1)
+    def migraciones_aplicadas(self) -> dict[int, dict]:
+        """{version: fila} de lo que ya está aplicado en ESTA base.
 
+        Es una lectura: si la base todavía no tiene el registro (es anterior a él),
+        devuelve vacío y NO crea nada. Quien aplica y registra es `migrar()`.
+        """
+        if "migraciones" not in self.tablas():
+            return {}
+        return {int(f["version"]): f for f in self.todos("SELECT * FROM migraciones ORDER BY version")}
+
+    def migraciones_pendientes(self) -> list[tuple[int, str]]:
+        """Las que faltan, en orden. Vacío = la base está al día."""
+        aplicadas = self.migraciones_aplicadas()
+        return [(version, nombre) for version, nombre, _ in MIGRACIONES if version not in aplicadas]
+
+    def migrar(self) -> list[str]:
+        """Pone la base al día y devuelve qué hizo, en texto. Idempotente.
+
+        Conviven dos mecanismos a propósito:
+
+        - las MIGRACIONES versionadas, que quedan registradas en la tabla `migraciones`
+          (así una base sabe en qué punto está y no hay que adivinar por las columnas);
+        - la reconciliación de columnas sueltas (`COLUMNAS_NUEVAS`), que es la red que ya
+          existía antes de que hubiera registro. Se mantiene porque es idempotente y
+          porque hay bases instaladas que dependen de ella.
+        """
+        aplicadas = self._aplicar_migraciones()
+        aplicadas += self._reconciliar_columnas_sueltas()
+        return aplicadas
+
+    # ------------------------------------------------------- interno de migrar
+    def _asegurar_tabla_de_migraciones(self) -> None:
+        self.ejecutar(
+            "CREATE TABLE IF NOT EXISTS migraciones ("
+            " version INTEGER PRIMARY KEY,"
+            " nombre TEXT NOT NULL,"
+            " aplicada_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+
+    def _aplicar_migraciones(self) -> list[str]:
+        """Aplica las pendientes, en orden, y las registra."""
+        self._asegurar_tabla_de_migraciones()
+        ya = {int(f["version"]) for f in self.todos("SELECT version FROM migraciones")}
+        aplicadas: list[str] = []
+
+        # Base anterior a este registro: tiene tablas pero no sabe en qué versión está.
+        # Se la marca en la 1 SIN volver a correr el esquema base (volver a correrlo
+        # sería inofensivo para el esquema, pero marcar y no adivinar es lo honesto).
+        if not ya and "clientes" in self.tablas():
+            self.ejecutar(
+                "INSERT INTO migraciones (version, nombre) VALUES (?, ?)",
+                (1, f"{MIGRACIONES[0][1]} (base anterior, marcada al adoptar el registro)"),
+            )
+            ya = {1}
+            aplicadas.append("marcada 1 (la base ya existía)")
+
+        for version, nombre, funcion in MIGRACIONES:
+            if version in ya:
+                continue
+            aplicadas += funcion(self)
+            self.ejecutar(
+                "INSERT INTO migraciones (version, nombre) VALUES (?, ?)", (version, nombre)
+            )
+            aplicadas.append(f"migración {version}: {nombre}")
+        return aplicadas
+
+    def _reconciliar_columnas_sueltas(self) -> list[str]:
+        aplicadas: list[str] = []
         for tabla, columnas in COLUMNAS_NUEVAS.items():
             existentes = self.columnas(tabla)
             for nombre, definicion in columnas.items():
@@ -150,3 +215,55 @@ class DB:
 
     def __exit__(self, *_: object) -> None:
         self.cerrar()
+
+
+# ==================================================================== migraciones
+# El esquema base vive en schema.sql y ES la migración 1. Cada cambio posterior de
+# estructura es una migración más, con su número, y queda registrado en la tabla
+# `migraciones` de cada base: así una base sabe en qué punto está, en vez de deducirlo
+# mirando columnas.
+#
+# Para agregar una:
+#   1. escribe la función que aplica el cambio, con sus guardas (la base puede venir de
+#      cualquier versión anterior: pregunte antes de tocar);
+#   2. súmala al final de la lista con el número siguiente.
+#
+# Nunca se edita una migración ya publicada: las bases que ya la corrieron no la vuelven
+# a correr, así que cambiarla sólo crearía dos historias distintas del mismo número.
+
+def _migracion_1_esquema_base(db: DB) -> list[str]:
+    """Migración 1: las tablas e índices del esquema, tal como están en schema.sql."""
+    ddl = SCHEMA.read_text(encoding="utf-8")
+    aplicadas = []
+    for fragmento in ddl.split(";"):
+        sentencia = "\n".join(
+            linea for linea in fragmento.splitlines() if not linea.strip().startswith("--")
+        ).strip()
+        if not sentencia or set(sentencia) <= {"-", "\n"}:
+            continue
+        db.ejecutar(sentencia)
+        aplicadas.append(" ".join(sentencia.split()[:3]))
+    return aplicadas
+
+
+def _migracion_2_documentos_integridad(db: DB) -> list[str]:
+    """Migración 2: hash y tamaño de cada documento, para acreditar que no cambió.
+
+    El hash se calcula al registrar el documento y se vuelve a calcular cuando alguien
+    pide verificarlo: si no calza, el archivo cambió después de incorporarse al
+    expediente — que es justo lo que hay que poder demostrar.
+    """
+    if "documentos" not in db.tablas():
+        return []
+    aplicadas = []
+    for columna, tipo in (("hash_sha256", "TEXT"), ("bytes", "INTEGER")):
+        if columna not in db.columnas("documentos"):
+            db.ejecutar(f"ALTER TABLE documentos ADD COLUMN {columna} {tipo}")
+            aplicadas.append(f"ALTER documentos.{columna}")
+    return aplicadas
+
+
+MIGRACIONES: list[tuple[int, str, Callable[[DB], list[str]]]] = [
+    (1, "esquema_base", _migracion_1_esquema_base),
+    (2, "documentos_integridad", _migracion_2_documentos_integridad),
+]
