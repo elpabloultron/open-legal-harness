@@ -711,9 +711,9 @@ def responder(solicitud: dict, ctx: Contexto) -> dict | None:
             "result": {
                 "protocolVersion": solicitud.get("params", {}).get("protocolVersion", PROTOCOLO),
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "openlegal-crm", "version": "0.1.0"},
+                "serverInfo": {"name": "open-legal-harness", "version": "0.1.0"},
                 "instructions": (
-                    "CRM jurídico chileno local. Antes de enviar el expediente a un modelo, "
+                    "CRM jurídico chileno local (Open Legal Harness). Antes de enviar el expediente a un modelo, "
                     "revisa crm_ia_estado y usa crm_ia_redactar para minimizar; registra el envío "
                     "con crm_ia_registrar. Los plazos se calculan con el Art. 66 CPC "
                     "(días hábiles, sin domingos ni feriados)."

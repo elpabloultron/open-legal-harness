@@ -63,7 +63,7 @@ class Credenciales(BaseModel):
 
 
 def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
-    app = FastAPI(title="Open Legal CRM", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Open Legal Harness", docs_url=None, redoc_url=None)
     app.state.db_url = db_url or os.environ.get("LEGALCRM_DB_URL")
     app.state.token = token or os.environ.get("OPENLEGAL_PANEL_TOKEN") or secrets.token_urlsafe(24)
 

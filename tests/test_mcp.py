@@ -66,7 +66,7 @@ class TestProtocolo(BaseMCP):
         respuesta = responder({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}, self.ctx)
         resultado = respuesta["result"]
         self.assertIn("tools", resultado["capabilities"])
-        self.assertEqual(resultado["serverInfo"]["name"], "openlegal-crm")
+        self.assertEqual(resultado["serverInfo"]["name"], "open-legal-harness")
         self.assertIn("Art. 66", resultado["instructions"])
 
     def test_tools_list_expone_esquemas(self):
@@ -218,7 +218,7 @@ class TestServidorRealPorStdio(BaseMCP):
                 return json.loads(proceso.stdout.readline())
 
             inicio = pedir({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-            self.assertEqual(inicio["result"]["serverInfo"]["name"], "openlegal-crm")
+            self.assertEqual(inicio["result"]["serverInfo"]["name"], "open-legal-harness")
 
             listado = pedir({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             self.assertGreaterEqual(len(listado["result"]["tools"]), 12)

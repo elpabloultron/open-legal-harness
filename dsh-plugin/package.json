@@ -1,7 +1,7 @@
 {
   "name": "@openlegal/dsh-client-ui-crm",
   "version": "0.1.0",
-  "description": "Fila «CRM Jurídico» en el sidebar de DeepSeek Harness, servida por openlegal (Open Legal CRM chileno)",
+  "description": "Fila «CRM Jurídico» en el sidebar de DeepSeek Harness, servida por openlegal (Open Legal Harness)",
   "type": "module",
   "license": "Apache-2.0",
   "main": "lib/index.js",

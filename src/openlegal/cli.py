@@ -431,7 +431,7 @@ def cmd_serve(args) -> None:
 
     app = crear_app(getattr(args, "db", None), args.token)
     url = f"http://{args.host}:{args.port}/?token={app.state.token}"
-    print("\nCRM Jurídico en marcha")
+    print("\nOpen Legal Harness — CRM Jurídico en marcha")
     print(f"  panel:  {url}")
     print(f"  base:   {app.state.db_url or '(por defecto)'}")
     print("  el token es local; el servicio solo escucha en el host indicado\n")

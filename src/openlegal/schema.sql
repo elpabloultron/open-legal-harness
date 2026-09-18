@@ -1,5 +1,5 @@
 -- ============================================================================
--- Open Legal CRM - Esquema de dominio (portable SQLite / PostgreSQL)
+-- Open Legal Harness - Esquema de dominio (portable SQLite / PostgreSQL)
 -- Un solo modelo para los dos modos:
 --   modo 'solo'     -> SQLite local, un estudio implicito, un usuario
 --   modo 'oficina'  -> PostgreSQL, varios usuarios, roles y asignacion de causas

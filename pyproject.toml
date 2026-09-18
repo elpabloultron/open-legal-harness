@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "open-legal-crm"
+name = "open-legal-harness"
 version = "0.1.0"
-description = "Harness legal chileno con CRM: modo abogado solo y modo oficina de abogados"
+description = "Open Legal Harness: harness legal chileno con CRM (modo abogado solo y modo oficina de abogados)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }

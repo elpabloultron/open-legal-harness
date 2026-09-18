@@ -1,4 +1,4 @@
-# ⚖️ Open Legal CRM — Harness legal chileno con CRM
+# ⚖️ Open Legal Harness — harness legal chileno con CRM
 
 Un arnés agéntico con CRM para el ejercicio de la abogacía en Chile. Un mismo
 núcleo sirve a dos realidades:

@@ -230,7 +230,7 @@ async function inicio() {
   try {
     const estado = await pedir("/api/estado");
     document.getElementById("pie").textContent =
-      `Open Legal CRM v${estado.version} · ${estado.motores} · ${estado.conteos.causas} causas, ${estado.conteos.plazos} plazos`;
+      `Open Legal Harness v${estado.version} · ${estado.motores} · ${estado.conteos.causas} causas, ${estado.conteos.plazos} plazos`;
   } catch (error) {
     document.getElementById("pie").textContent = "";
   }
