@@ -41,13 +41,30 @@ class BaseMCP(unittest.TestCase):
         )
         service.asignar(self.db, self.socio, self.causa, abogado_id, "responsable")
         self.ctx = Contexto(self.url, "socia@mcp.cl")
+        self._contextos: list[Contexto] = []
+
+    def contexto_extra(self, email: str) -> Contexto:
+        """Un Contexto adicional (otro usuario del CRM) que se cierra al terminar.
+
+        Ojo con el orden, que costó una corrida de CI en Windows: unittest corre los
+        `addCleanup` DESPUÉS de `tearDown`, así que cerrar ahí no sirve — el temporal se
+        limpia primero y en Windows eso falla con el archivo todavía abierto. Por eso los
+        contextos extra se anotan acá y se cierran dentro de `tearDown`.
+        """
+        contexto = Contexto(self.url, email)
+        self._contextos.append(contexto)
+        return contexto
 
     def tearDown(self):
-        # El contexto del MCP abre SU PROPIA conexión a la misma base: si no se cierra,
-        # en Windows la limpieza del temporal falla (no se puede borrar un archivo
-        # abierto). Se cierran las dos.
+        # Primero TODO lo que tiene la base abierta (los contextos extra del MCP abren su
+        # propia conexión), después se borra el temporal.
+        for contexto in self._contextos:
+            contexto.cerrar()
         self.ctx.cerrar()
         self.db.cerrar()
+        assert self.db._cerrada, "la conexión principal quedó abierta"
+        for contexto in self._contextos:
+            assert contexto._db is None, "quedó un contexto del MCP con la base abierta"
         self.tmp.cleanup()
 
     def llamar(self, herramienta: str, **argumentos):
@@ -314,8 +331,7 @@ class TestRectificarPlazo(BaseMCP):
             self.db, self.estudio, "Carmen Díaz", "carmen@mcp.cl", "administrativo", "clave"
         )
         service.asignar(self.db, self.socio, self.causa, secretaria_id, "paralegal")
-        ctx_secretaria = Contexto(self.url, "carmen@mcp.cl")
-        self.addCleanup(ctx_secretaria.cerrar)
+        ctx_secretaria = self.contexto_extra("carmen@mcp.cl")
         solicitud = {
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {
@@ -438,8 +454,7 @@ class TestAuditoria(BaseMCP):
             self.db, self.estudio, "Carmen Díaz", "carmen2@mcp.cl", "administrativo", "clave"
         )
         service.asignar(self.db, self.socio, self.causa, secretaria_id, "paralegal")
-        contexto = Contexto(self.url, "carmen2@mcp.cl")
-        self.addCleanup(contexto.cerrar)
+        contexto = self.contexto_extra("carmen2@mcp.cl")
         respuesta = responder({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "crm_auditoria_leer",
