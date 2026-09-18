@@ -441,5 +441,66 @@ class TestAuditoria(BaseMCP):
         self.assertIn("crm_auditoria_leer", {h["name"] for h in HERRAMIENTAS})
 
 
+class TestAudienciaRectificable(BaseMCP):
+    """El agente quedó con una audiencia duplicada y no había forma de corregirla ni
+    cancelarla: solo crear. Ahora hay dos herramientas, con el mismo criterio que los
+    plazos — se rectifica, no se duplica, y nada se borra.
+    """
+
+    def test_actualizar_corrige_y_audita(self):
+        audiencia_id = service.crear_audiencia(
+            self.db, self.socio, self.causa, "Audiencia preparatoria", "2026-10-05", "09:30",
+            modalidad="remota", lugar_o_url="https://zoom.us/j/1",
+        )
+        resultado, error = self.llamar(
+            "crm_audiencia_actualizar", audiencia_id=audiencia_id, fecha="2026-10-07",
+            hora="10:00", motivo="el tribunal reprogramó la audiencia",
+        )
+        self.assertFalse(error)
+        self.assertEqual(resultado["campos_actualizados"], ["fecha", "hora"])
+
+        fila = self.db.uno("SELECT fecha, hora FROM audiencias WHERE id = ?", (audiencia_id,))
+        self.assertEqual((fila["fecha"], fila["hora"]), ("2026-10-07", "10:00"))
+
+        evento = self.db.uno(
+            "SELECT accion, detalle FROM auditoria WHERE entidad = 'audiencias' AND entidad_id = ? "
+            "ORDER BY id DESC",
+            (audiencia_id,),
+        )
+        self.assertEqual(evento["accion"], "audiencia.editar")
+        self.assertIn("reprogramó", evento["detalle"])
+
+    def test_cancelar_deja_la_fila_con_estado_cancelada(self):
+        audiencia_id = service.crear_audiencia(
+            self.db, self.socio, self.causa, "Audiencia preparatoria", "2026-10-05", "09:30",
+        )
+        resultado, error = self.llamar(
+            "crm_audiencia_cancelar", audiencia_id=audiencia_id, motivo="duplicado de la id 1"
+        )
+        self.assertFalse(error)
+        self.assertTrue(resultado["ok"])
+        fila = self.db.uno("SELECT estado FROM audiencias WHERE id = ?", (audiencia_id,))
+        self.assertEqual(fila["estado"], "cancelada")
+
+    def test_motivo_obligatorio_en_ambas(self):
+        audiencia_id = service.crear_audiencia(
+            self.db, self.socio, self.causa, "Audiencia preparatoria", "2026-10-05",
+        )
+        for herramienta, argumentos in (
+            ("crm_audiencia_actualizar", {"audiencia_id": audiencia_id, "fecha": "2026-10-07"}),
+            ("crm_audiencia_cancelar", {"audiencia_id": audiencia_id}),
+        ):
+            datos, error = self.llamar(herramienta, **argumentos)
+            self.assertTrue(error, f"{herramienta} debería exigir motivo")
+            self.assertIn("motivo", str(datos))
+        fila = self.db.uno("SELECT fecha, estado FROM audiencias WHERE id = ?", (audiencia_id,))
+        self.assertEqual((fila["fecha"], fila["estado"]), ("2026-10-05", "programada"))
+
+    def test_las_herramientas_se_anuncian(self):
+        nombres = {h["name"] for h in HERRAMIENTAS}
+        self.assertIn("crm_audiencia_actualizar", nombres)
+        self.assertIn("crm_audiencia_cancelar", nombres)
+
+
 if __name__ == "__main__":
     unittest.main()

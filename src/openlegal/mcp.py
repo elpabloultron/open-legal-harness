@@ -163,13 +163,20 @@ HERRAMIENTAS: list[dict[str, Any]] = [
         "description": (
             "Calcula el vencimiento de un plazo de días hábiles judiciales (Art. 66 CPC): "
             "no cuenta domingos ni feriados, empieza el día siguiente a la notificación, "
-            "y devuelve el detalle día por día."
+            "y devuelve el detalle día por día. El sábado es hábil por defecto (procedimiento "
+            "civil); si el abogado sigue el criterio administrativo, pásalo en `sabado_habil: "
+            "false`. La regla aplicada vuelve en `regla_dias_habiles`: no la cambies sin decirlo."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "notificacion": {"type": "string", "description": "YYYY-MM-DD"},
                 "dias": {"type": "integer"},
+                "sabado_habil": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "¿el sábado cuenta como día hábil? (por defecto sí, art. 59 y 66 CPC)",
+                },
             },
             "required": ["notificacion", "dias"],
         },
@@ -186,6 +193,7 @@ HERRAMIENTAS: list[dict[str, Any]] = [
                 "notificacion": {"type": "string", "description": "YYYY-MM-DD"},
                 "es_fatal": {"type": "boolean", "default": True},
                 "tipo": {"type": "string", "enum": ["judicial", "administrativo", "interno"]},
+                "sabado_habil": {"type": "boolean", "default": True, "description": "¿el sábado cuenta como día hábil?"},
             },
             "required": ["causa_id", "descripcion", "dias", "notificacion"],
         },
@@ -223,6 +231,7 @@ HERRAMIENTAS: list[dict[str, Any]] = [
                 "notificacion": {"type": "string", "description": "YYYY-MM-DD"},
                 "es_fatal": {"type": "boolean"},
                 "motivo": {"type": "string", "description": "Por qué se corrige (queda auditado)"},
+                "sabado_habil": {"type": "boolean", "default": True, "description": "¿el sábado cuenta como día hábil?"},
             },
             "required": ["plazo_id", "motivo"],
         },
@@ -253,7 +262,11 @@ HERRAMIENTAS: list[dict[str, Any]] = [
     },
     {
         "name": "crm_audiencia_crear",
-        "description": "Agenda una audiencia en la causa (presencial, remota o híbrida).",
+        "description": (
+            "Agenda una audiencia en la causa (presencial, remota o híbrida). Antes de crear, "
+            "revisa la agenda de la causa: si ya existe la misma audiencia, no la dupliques — "
+            "corrígela con crm_audiencia_actualizar."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -265,6 +278,43 @@ HERRAMIENTAS: list[dict[str, Any]] = [
                 "lugar_o_url": {"type": "string"},
             },
             "required": ["causa_id", "tipo", "fecha"],
+        },
+    },
+    {
+        "name": "crm_audiencia_actualizar",
+        "description": (
+            "Corrige una audiencia existente (tipo, fecha, hora, modalidad, lugar o minuta). "
+            "Úsalo cuando cambió la fecha o cuando la audiencia quedó mal cargada. El motivo "
+            "queda en la bitácora."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "audiencia_id": {"type": "integer"},
+                "tipo": {"type": "string"},
+                "fecha": {"type": "string", "description": "YYYY-MM-DD"},
+                "hora": {"type": "string", "description": "HH:MM"},
+                "modalidad": {"type": "string", "enum": ["presencial", "remota", "hibrida"]},
+                "lugar_o_url": {"type": "string"},
+                "minuta": {"type": "string"},
+                "motivo": {"type": "string", "description": "Por qué se corrige (queda auditado)"},
+            },
+            "required": ["audiencia_id", "motivo"],
+        },
+    },
+    {
+        "name": "crm_audiencia_cancelar",
+        "description": (
+            "Deja una audiencia sin efecto sin borrarla (por ejemplo, un duplicado que quedó "
+            "cargado por error). El motivo queda en la bitácora."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "audiencia_id": {"type": "integer"},
+                "motivo": {"type": "string"},
+            },
+            "required": ["audiencia_id", "motivo"],
         },
     },
     {
@@ -313,15 +363,24 @@ HERRAMIENTAS: list[dict[str, Any]] = [
         "name": "crm_ia_redactar",
         "description": (
             "Minimiza un texto antes de mandarlo a un modelo: reemplaza RUT, correos, "
-            "teléfonos y los nombres de la causa por marcadores. Devuelve el texto limpio "
-            "y el mapa para reidentificar (que se queda en el estudio)."
+            "teléfonos y los nombres declarados por marcadores. Devuelve el texto limpio, "
+            "el mapa para reidentificar (que se queda en el estudio) y los avisos. "
+            "IMPORTANTE: en `terminos` van los nombres propios que aparezcan en el texto "
+            "(partes, representantes, testigos) ADEMÁS de los de la ficha de la causa: el "
+            "CRM solo conoce los suyos, y lo que no se declara no se enmascara. Revisa el "
+            "resultado antes de mandarlo: si ves un nombre o un RUT a la vista, agrégalo a "
+            "`terminos` y vuelve a minimizar."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "texto": {"type": "string"},
                 "causa_id": {"type": "integer", "description": "para tomar los nombres de la causa"},
-                "terminos": {"type": "array", "items": {"type": "string"}},
+                "terminos": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "nombres propios a enmascarar, incluidos los que aparezcan en el documento",
+                },
             },
             "required": ["texto"],
         },
@@ -418,7 +477,8 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
     if nombre == "crm_plazo_calcular":
         notificacion = fecha_iso(argumentos.get("notificacion"), "notificacion")
         dias_habiles = entero(argumentos.get("dias"), "dias", minimo=1)
-        resultado = plazos.vencimiento(notificacion, dias_habiles)
+        sabado_habil = bool(argumentos.get("sabado_habil", True))
+        resultado = plazos.vencimiento(notificacion, dias_habiles, sabado_habil=sabado_habil)
         return {**resultado, "feriados_pendientes_de_validacion": plazos.feriados_por_validar(notificacion.year)}
 
     if nombre == "crm_plazo_crear":
@@ -434,11 +494,15 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
             fecha_notificacion=fecha_iso(argumentos.get("notificacion"), "notificacion").isoformat(),
             tipo=str(argumentos.get("tipo") or "judicial"),
             es_fatal=bool(argumentos.get("es_fatal", True)),
+            sabado_habil=bool(argumentos.get("sabado_habil", True)),
         )
+        calculo_creado = resultado["calculo"] or {}
         return {
             "plazo_id": resultado["id"],
             "fecha_vencimiento": resultado["fecha_vencimiento"],
-            "detalle": (resultado["calculo"] or {}).get("detalle", []),
+            "detalle": calculo_creado.get("detalle", []),
+            "regla_dias_habiles": calculo_creado.get("regla_dias_habiles"),
+            "advertencias": calculo_creado.get("advertencias", []),
         }
 
     if nombre == "crm_plazo_listar":
@@ -483,6 +547,7 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
             ),
             es_fatal=argumentos.get("es_fatal"),
             motivo=motivo,
+            sabado_habil=bool(argumentos.get("sabado_habil", True)),
         )
         calculo = resultado.get("calculo") or {}
         return {
@@ -490,6 +555,7 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
             "campos_actualizados": resultado["campos_actualizados"],
             "fecha_vencimiento": resultado["fecha_vencimiento"],
             "detalle": calculo.get("detalle", []),
+            "regla_dias_habiles": calculo.get("regla_dias_habiles"),
             "advertencias": calculo.get("advertencias", []),
         }
 
@@ -513,6 +579,37 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
             lugar_o_url=argumentos.get("lugar_o_url"),
         )
         return {"audiencia_id": audiencia_id}
+
+    if nombre == "crm_audiencia_actualizar":
+        motivo_audiencia = str(argumentos.get("motivo") or "").strip()
+        if not motivo_audiencia:
+            raise ErrorArgumento(
+                "'motivo' es obligatorio: di por qué se corrige la audiencia. Queda en la "
+                "bitácora y es lo que permite explicar el cambio después."
+            )
+        resultado = service.actualizar_audiencia(
+            db, usuario, entero(argumentos.get("audiencia_id"), "audiencia_id", minimo=1),
+            tipo=argumentos.get("tipo"),
+            fecha=(fecha_iso(argumentos["fecha"], "fecha").isoformat()
+                   if argumentos.get("fecha") is not None else None),
+            hora=argumentos.get("hora"),
+            modalidad=argumentos.get("modalidad"),
+            lugar_o_url=argumentos.get("lugar_o_url"),
+            minuta=argumentos.get("minuta"),
+            motivo=motivo_audiencia,
+        )
+        return resultado
+
+    if nombre == "crm_audiencia_cancelar":
+        motivo_cancelar_audiencia = str(argumentos.get("motivo") or "").strip()
+        if not motivo_cancelar_audiencia:
+            raise ErrorArgumento(
+                "'motivo' es obligatorio: di por qué la audiencia deja de estar agendada "
+                "(está duplicada, se suspendió, cambió de fecha)."
+            )
+        audiencia_cancelada = entero(argumentos.get("audiencia_id"), "audiencia_id", minimo=1)
+        service.cancelar_audiencia(db, usuario, audiencia_cancelada, motivo_cancelar_audiencia)
+        return {"ok": True, "audiencia_id": audiencia_cancelada}
 
     if nombre == "crm_documento_registrar":
         causa_id = int(argumentos["causa_id"])
@@ -577,8 +674,19 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
         if causa_id:
             auth.exigir(db, usuario, "causa.leer", int(causa_id))
             terminos += ia.terminos_de_causa(db, int(causa_id))
-        limpio, mapa = ia.redactar(str(argumentos["texto"]), terminos)
-        return {"texto_minimizado": limpio, "mapa_local": mapa}
+        avisos: list[str] = []
+        limpio, mapa = ia.redactar(str(argumentos["texto"]), terminos, avisos=avisos)
+        return {
+            "texto_minimizado": limpio,
+            "mapa_local": mapa,
+            "marcadores": len(mapa),
+            "avisos": avisos,
+            "recordatorio": (
+                "Revisa el texto minimizado antes de enviarlo: lo que no se declaró en "
+                "'terminos' no se enmascara. Los marcadores [RUT?·n] son RUT cuyo dígito "
+                "verificador no valida."
+            ),
+        }
 
     if nombre == "crm_ia_registrar":
         registro = service.registrar_transferencia(

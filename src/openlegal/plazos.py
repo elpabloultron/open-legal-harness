@@ -1,8 +1,20 @@
 """Computo de plazos de dias habiles judiciales (Art. 66 CPC).
 
-Art. 66 CPC: los plazos de dias establecidos por la ley son de dias habiles;
-se suspenden los dias feriados y se cuentan desde el dia siguiente a la
-notificacion.
+Art. 59 CPC: "Las actuaciones judiciales deben practicarse en dias y horas
+habiles. Son dias habiles los no feriados." Art. 66 CPC: los terminos de dias se
+entienden suspendidos durante los feriados, y los terminos corren desde el dia
+siguiente a la notificacion.
+
+El sabado es habil por defecto, con este respaldo: en el procedimiento civil el
+"feriado" del art. 66 se ha entendido referido a domingos y festivos (los sabados
+son habiles), mientras que en el procedimiento administrativo de la Ley 19.880 los
+sabados son inhabiles. La eleccion se deja EXPLICITA en cada calculo —el campo
+`regla_dias_habiles` dice cual se aplico y el parametro `sabado_habil` la cambia—,
+porque un dia de diferencia en un plazo fatal no puede quedar implicito.
+
+Nota de direccion del error: tratar el sabado como habil acorta el plazo (fecha mas
+temprana = conservadora); tratarlo como inhabil lo alarga (fecha mas tardia =
+peligrosa si el criterio verdadero fuera el otro). Por eso el defecto es habil.
 
 Los feriados NO se adivinan en el codigo: viven en `feriados_cl.json`, que hay
 que validar cada ano contra el calendario oficial (BCN / Direccion del Trabajo).
@@ -45,12 +57,25 @@ def ficha_feriado(anio: int, dia: dt.date, ruta: pathlib.Path | None = None) -> 
 
 
 def es_habil(dia: dt.date, feriados: set[dt.date], sabado_habil: bool = True) -> bool:
-    """Dia habil judicial: no domingo y no feriado. El sabado es habil (Art. 66 CPC)."""
+    """Dia habil judicial: no domingo y no feriado. El sabado es habil por defecto.
+
+    Ver el encabezado del modulo: la regla del sabado se deja explicita en el
+    resultado del calculo, y el defecto (sabado habil) es el conservador.
+    """
     if dia.weekday() == 6:
         return False
     if dia.weekday() == 5 and not sabado_habil:
         return False
     return dia not in feriados
+
+
+def regla_dias_habiles(sabado_habil: bool) -> str:
+    """Texto de la regla aplicada, para que el calculo se pueda auditar."""
+    if sabado_habil:
+        return ("días hábiles de lunes a sábado: se suspenden domingos y feriados "
+                "(art. 59 y 66 CPC; el sábado es hábil en el procedimiento civil)")
+    return ("días hábiles de lunes a viernes: se suspenden sábados, domingos y feriados "
+            "(criterio del procedimiento administrativo, Ley 19.880)")
 
 
 def vencimiento(
@@ -59,7 +84,7 @@ def vencimiento(
     feriados: set[dt.date] | None = None,
     sabado_habil: bool = True,
 ) -> dict:
-    """Devuelve {fecha_vencimiento, detalle, advertencias} contando `dias` habiles.
+    """Devuelve {fecha_vencimiento, detalle, advertencias, regla_dias_habiles} contando `dias` habiles.
 
     Se empieza a contar desde el dia siguiente a la notificacion. Si el computo
     pisa un año cuyos feriados no estan validados, lo dice en `advertencias`: un
@@ -106,7 +131,13 @@ def vencimiento(
                 f"los feriados de {anio} no están validados contra el calendario oficial: "
                 f"revisa el vencimiento antes de usarlo en juicio"
             )
-    return {"fecha_vencimiento": dia.isoformat(), "detalle": detalle, "advertencias": advertencias}
+    return {
+        "fecha_vencimiento": dia.isoformat(),
+        "detalle": detalle,
+        "advertencias": advertencias,
+        "regla_dias_habiles": regla_dias_habiles(sabado_habil),
+        "sabado_habil": sabado_habil,
+    }
 
 
 def feriados_por_validar(anio: int) -> bool:

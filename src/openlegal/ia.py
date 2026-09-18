@@ -93,32 +93,57 @@ def _rut_valido(rut: str) -> bool:
     return limpio[-1] == esperado
 
 
-def redactar(texto: str, terminos: list[str] | None = None) -> tuple[str, dict[str, str]]:
+def redactar(
+    texto: str,
+    terminos: list[str] | None = None,
+    avisos: list[str] | None = None,
+) -> tuple[str, dict[str, str]]:
     """Devuelve (texto minimizado, mapa para reidentificar localmente).
 
     Los RUT y correos se reemplazan siempre (identifican directo). Además se
-    reemplazan los nombres propios que el estudio declare sensibles: clientes,
-    contrapartes, testigos.
+    reemplazan los nombres propios que se declaren en `terminos`: los de la ficha
+    de la causa **y los que aparezcan dentro del documento**, que el CRM no conoce
+    (partes, representantes, testigos). Pásalos: si no, quedan a la vista.
+
+    Un RUT con dígito verificador inválido se enmascara igual, con `[RUT?·n]` y un
+    aviso: puede ser un RUT extranjero, mal escaneado o inventado, y justamente por
+    eso el minimizador no puede dejarlo pasar — filtrar un dato personal por un
+    dígito mal calculado sería el peor de los fallos posibles.
     """
     mapa: dict[str, str] = {}
-    contador = {"RUT": 0, "CORREO": 0, "TELEFONO": 0, "NOMBRE": 0}
+    contador = {"RUT": 0, "RUT?": 0, "CORREO": 0, "TELEFONO": 0, "NOMBRE": 0}
 
     def marcador(tipo: str, valor: str) -> str:
         clave = f"[{tipo}·{len(mapa) + 1}]"
         mapa[clave] = valor
-        contador[tipo] += 1
+        contador[tipo] = contador.get(tipo, 0) + 1
         return clave
 
     def reemplazar_rut(coincidencia: re.Match) -> str:
         valor = coincidencia.group(1)
-        return marcador("RUT", valor) if _rut_valido(valor) else valor
+        if _rut_valido(valor):
+            return marcador("RUT", valor)
+        if avisos is not None:
+            avisos.append(
+                f"el RUT {valor!r} no valida su dígito verificador (módulo 11): se enmascara "
+                f"igual, pero conviene revisarlo — puede venir mal escaneado del expediente"
+            )
+        return marcador("RUT?", valor)
 
     texto = PATRON_RUT.sub(reemplazar_rut, texto)
     texto = PATRON_EMAIL.sub(lambda m: marcador("CORREO", m.group(0)), texto)
     texto = PATRON_TELEFONO.sub(lambda m: marcador("TELEFONO", m.group(0)), texto)
     for termino in sorted(terminos or [], key=len, reverse=True):
-        if termino and termino in texto:
-            texto = texto.replace(termino, marcador("NOMBRE", termino))
+        if not termino:
+            continue
+        # Insensible a mayúsculas: en el expediente los nombres aparecen en caja alta
+        # ("MARÍA FERNANDA PÉREZ SOTO", "ANDES SpA") y el término viene de la ficha de la
+        # causa en caja normal. Con comparación exacta, el nombre se filtraba igual.
+        patron = re.compile(re.escape(termino), re.IGNORECASE)
+        primera = patron.search(texto)
+        if primera:
+            clave = marcador("NOMBRE", primera.group(0))
+            texto = patron.sub(lambda _: clave, texto)
     return texto, mapa
 
 

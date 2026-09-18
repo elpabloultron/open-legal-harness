@@ -43,15 +43,46 @@ class BaseIA(unittest.TestCase):
 
 
 class TestMinimizacion(BaseIA):
-    def test_redacta_rut_valido_y_deja_el_invalido(self):
+    def test_enmascara_todo_rut_aunque_el_digito_verificador_no_valide(self):
         # 76.543.210-3 es válido (módulo 11); 12.345.678-9 y 1.234.567-8 no lo son.
+        # Un RUT inválido puede ser extranjero, inventado o mal escaneado: se enmascara
+        # igual y se avisa. Dejar pasar datos personales por un dígito mal calculado
+        # sería el peor fallo posible de un minimizador.
         texto = "El RUT del actor es 76.543.210-3 y el otro 12.345.678-9 y este 1.234.567-8."
-        limpio, mapa = ia.redactar(texto)
+        avisos: list[str] = []
+        limpio, mapa = ia.redactar(texto, avisos=avisos)
+
         self.assertIn("[RUT·1]", limpio)
-        self.assertIn("12.345.678-9", limpio, "un RUT con dígito verificador inválido no es un RUT")
-        self.assertIn("1.234.567-8", limpio)
-        self.assertEqual(len(mapa), 1)
+        self.assertIn("[RUT?·2]", limpio)
+        self.assertIn("[RUT?·3]", limpio)
+        self.assertNotIn("12.345.678-9", limpio, "un RUT con dígito verificador inválido también es dato personal")
+        self.assertNotIn("1.234.567-8", limpio)
         self.assertEqual(mapa["[RUT·1]"], "76.543.210-3")
+        self.assertEqual(mapa["[RUT?·2]"], "12.345.678-9")
+        self.assertEqual(len(avisos), 2)
+        self.assertIn("dígito verificador", avisos[0])
+
+    def test_sin_avisos_no_estalla_ni_cambia_el_texto(self):
+        limpio, mapa = ia.redactar("RUT 12.345.678-9")
+        self.assertIn("[RUT?·1]", limpio)
+        self.assertEqual(mapa["[RUT?·1]"], "12.345.678-9")
+
+    def test_enmascara_los_nombres_tambien_en_caja_alta(self):
+        # En el expediente los nombres van en mayúsculas; los términos vienen de la ficha
+        # de la causa en caja normal. Comparar exacto dejaba el nombre a la vista.
+        texto = "comparece MARÍA FERNANDA PÉREZ SOTO y también María Fernanda Pérez Soto"
+        limpio, mapa = ia.redactar(texto, ["María Fernanda Pérez Soto"])
+        self.assertNotIn("MARÍA FERNANDA PÉREZ SOTO", limpio)
+        self.assertNotIn("María Fernanda Pérez Soto", limpio)
+        self.assertEqual(limpio.count("[NOMBRE·1]"), 2, "todas las apariciones van al mismo marcador")
+        self.assertEqual(mapa["[NOMBRE·1]"], "MARÍA FERNANDA PÉREZ SOTO")
+        self.assertEqual(ia.reidentificar(limpio, mapa).count("[NOMBRE·1]"), 0)
+
+    def test_un_rut_invalido_tambien_se_reidentifica(self):
+        original = "Comparece 12.345.678-9 ante el tribunal"
+        limpio, mapa = ia.redactar(original)
+        self.assertNotIn("12.345.678-9", limpio)
+        self.assertEqual(ia.reidentificar(limpio, mapa), original)
 
     def test_redacta_correo_telefono_y_nombres_declarados(self):
         texto = "Escribe a ana.perez@andes.cl o al +56 9 1234 5678. Constructora Andes SpA alega."

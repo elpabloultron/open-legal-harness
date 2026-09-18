@@ -25,7 +25,7 @@ PERMISOS: dict[str, set[str]] = {
     "socio": {
         "causa.leer.todas", "causa.crear", "causa.editar", "causa.asignar",
         "cliente.leer", "cliente.editar", "plazo.leer", "plazo.crear", "plazo.cerrar", "plazo.editar",
-        "audiencia.leer", "audiencia.crear", "documento.leer", "documento.crear",
+        "audiencia.leer", "audiencia.crear", "audiencia.editar", "documento.leer", "documento.crear",
         "documento.publicar", "honorario.leer", "honorario.editar", "gasto.leer",
         "gasto.editar", "usuario.gestionar", "auditoria.leer", "reporte.panel",
         "honorario.leer.todos", "ia.autorizar", "ia.enviar", "ia.leer",
@@ -36,23 +36,23 @@ PERMISOS: dict[str, set[str]] = {
     "administrador": {
         "causa.leer", "causa.leer.todas", "causa.crear", "causa.asignar", "cliente.leer",
         "cliente.editar", "plazo.leer", "plazo.crear", "plazo.editar", "audiencia.leer", "audiencia.crear",
-        "documento.leer", "usuario.gestionar", "auditoria.leer", "reporte.panel",
+        "audiencia.editar", "documento.leer", "usuario.gestionar", "auditoria.leer", "reporte.panel",
     },
     "abogado": {
         "causa.leer", "causa.crear", "causa.editar", "cliente.leer", "cliente.editar",
         "plazo.leer", "plazo.crear", "plazo.cerrar", "plazo.editar", "audiencia.leer", "audiencia.crear",
-        "documento.leer", "documento.crear", "documento.publicar", "gasto.leer",
+        "audiencia.editar", "documento.leer", "documento.crear", "documento.publicar", "gasto.leer",
         "honorario.leer", "reporte.panel", "ia.autorizar", "ia.enviar", "ia.leer",
     },
     "paralegal": {
         "causa.leer", "cliente.leer", "plazo.leer", "plazo.crear", "plazo.editar", "audiencia.leer",
-        "audiencia.crear", "documento.leer", "documento.crear", "gasto.leer",
+        "audiencia.crear", "audiencia.editar", "documento.leer", "documento.crear", "gasto.leer",
     },
     "administrativo": {
         # Ve todas las causas del estudio para poder facturar, pero sin documentos
         # ni redaccion: el acceso sustantivo sigue siendo por asignacion.
         "causa.leer", "causa.leer.todas", "cliente.leer", "cliente.editar", "plazo.leer",
-        "audiencia.leer", "audiencia.crear", "honorario.leer", "honorario.editar", "gasto.leer",
+        "audiencia.leer", "audiencia.crear", "audiencia.editar", "honorario.leer", "honorario.editar", "gasto.leer",
         "gasto.editar", "reporte.panel",
     },
     # El cliente solo ve su causa, su estado, sus audiencias y lo publicado.

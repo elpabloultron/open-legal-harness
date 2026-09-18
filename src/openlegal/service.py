@@ -103,13 +103,14 @@ def crear_plazo(
     tipo: str = "judicial",
     es_fatal: bool = True,
     responsable_id: int | None = None,
+    sabado_habil: bool = True,
 ) -> dict:
     auth.exigir(db, usuario, "plazo.crear", causa_id)
     fecha_vencimiento = None
     calculo = None
     if dias and fecha_notificacion:
         notificacion = dt.date.fromisoformat(fecha_notificacion)
-        calculo = plazos.vencimiento(notificacion, dias)
+        calculo = plazos.vencimiento(notificacion, dias, sabado_habil=sabado_habil)
         fecha_vencimiento = calculo["fecha_vencimiento"]
     plazo_id = db.insertar(
         "plazos",
@@ -167,6 +168,7 @@ def actualizar_plazo(
     fecha_notificacion: str | None = None,
     es_fatal: bool | None = None,
     motivo: str | None = None,
+    sabado_habil: bool = True,
 ) -> dict:
     """Corrige un plazo y recalcula su vencimiento con el Art. 66 CPC.
 
@@ -195,7 +197,9 @@ def actualizar_plazo(
     nuevos_dias = campos.get("dias", plazo["dias"])
     nueva_notificacion = campos.get("fecha_notificacion", plazo["fecha_notificacion"])
     if nuevos_dias and nueva_notificacion:
-        calculo = plazos.vencimiento(dt.date.fromisoformat(nueva_notificacion), int(nuevos_dias))
+        calculo = plazos.vencimiento(
+            dt.date.fromisoformat(nueva_notificacion), int(nuevos_dias), sabado_habil=sabado_habil
+        )
         campos["fecha_vencimiento"] = calculo["fecha_vencimiento"]
 
     asignaciones = ", ".join(f"{col} = ?" for col in campos)
@@ -248,6 +252,60 @@ def crear_audiencia(
     )
     auth.auditar(db, usuario["estudio_id"], usuario["id"], "audiencia.crear", "audiencias", audiencia_id)
     return audiencia_id
+
+
+def actualizar_audiencia(
+    db: DB,
+    usuario: dict,
+    audiencia_id: int,
+    tipo: str | None = None,
+    fecha: str | None = None,
+    hora: str | None = None,
+    modalidad: str | None = None,
+    lugar_o_url: str | None = None,
+    minuta: str | None = None,
+    motivo: str | None = None,
+) -> dict:
+    """Corrige una audiencia existente (fecha, hora, modalidad, lugar, minuta).
+
+    Mismo criterio que los plazos: una audiencia mal cargada se rectifica, no se
+    duplica ni se borra. El motivo queda en la bitácora.
+    """
+    audiencia = db.uno("SELECT * FROM audiencias WHERE id = ?", (audiencia_id,))
+    if not audiencia:
+        raise ValueError(f"audiencia {audiencia_id} no existe")
+    auth.exigir(db, usuario, "audiencia.editar", audiencia["causa_id"])
+
+    campos: dict = {}
+    for columna, valor in (
+        ("tipo", tipo), ("fecha", fecha), ("hora", hora),
+        ("modalidad", modalidad), ("lugar_o_url", lugar_o_url), ("minuta", minuta),
+    ):
+        if valor is not None:
+            campos[columna] = valor
+    if not campos:
+        raise ValueError("no se indico ningun campo que actualizar")
+
+    asignaciones = ", ".join(f"{col} = ?" for col in campos)
+    db.ejecutar(f"UPDATE audiencias SET {asignaciones} WHERE id = ?", (*campos.values(), audiencia_id))
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], "audiencia.editar", "audiencias", audiencia_id,
+        f"motivo: {motivo or 'no indicado'} | campos: {sorted(campos)}",
+    )
+    return {"id": audiencia_id, "campos_actualizados": sorted(campos)}
+
+
+def cancelar_audiencia(db: DB, usuario: dict, audiencia_id: int, motivo: str) -> None:
+    """Deja una audiencia sin efecto sin borrarla (p. ej. un duplicado)."""
+    audiencia = db.uno("SELECT * FROM audiencias WHERE id = ?", (audiencia_id,))
+    if not audiencia:
+        raise ValueError(f"audiencia {audiencia_id} no existe")
+    auth.exigir(db, usuario, "audiencia.editar", audiencia["causa_id"])
+    db.ejecutar("UPDATE audiencias SET estado = 'cancelada' WHERE id = ?", (audiencia_id,))
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], "audiencia.cancelar", "audiencias", audiencia_id,
+        f"motivo: {motivo}",
+    )
 
 
 def agenda(db: DB, usuario: dict, desde: str | None = None, dias: int = 30) -> list[dict]:
