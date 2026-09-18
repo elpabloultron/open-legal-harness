@@ -24,7 +24,7 @@ import pathlib
 import sys
 from typing import NoReturn
 
-from . import auth, ia, plazos, seguridad, service, titulares
+from . import auth, ia, plazos, retencion, seguridad, service, titulares
 from .db import DB, MIGRACIONES
 
 
@@ -577,6 +577,50 @@ def cmd_seguridad(args) -> None:
             print(f"  {fila['email']} ({fila['rol']})")
 
 
+def cmd_retencion(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+
+    if args.definir:
+        if not args.meses:
+            salida_error("falta --meses: el plazo que declaras para ese tipo de dato")
+        retencion.definir(db, usuario, args.definir, args.meses, args.motivo or "")
+        print(f"plazo declarado · {args.definir}: {args.meses} meses")
+        return
+
+    if args.aplicar:
+        if not args.motivo:
+            salida_error("falta --motivo: una anonimización por retención tiene que ser explicable")
+        informe_ = retencion.aplicar(db, usuario, args.motivo, simular=not args.escribir)
+        if informe_["simulado"]:
+            print("SIMULACIÓN: no se escribió nada. Para ejecutarla, agrega --escribir")
+        for fila in informe_["anonimizados"]:
+            estado = "anonimizado" if fila["hecho"] else "se anonimizaría"
+            print(f"  {estado}: {fila['nombre']} (cliente {fila['cliente_id']})")
+        if not informe_["anonimizados"]:
+            print("  no hay ninguna persona cuyo plazo esté cumplido")
+        for fila in informe_["conservado"]:
+            print(f"  se conserva · {fila['tabla']}: {fila['filas']} fila(s) — {fila['motivo']}")
+        if not informe_["simulado"] and informe_["anonimizados"]:
+            print("  la operación quedó en la bitácora como retencion.aplicar")
+        db.cerrar()
+        return
+
+    datos = retencion.informe(db)
+    print(f"política de retención · corte de {datos['corte_meses']} meses por último movimiento")
+    for tipo, regla in sorted(datos["politica"].items()):
+        print(f"  {tipo}: {regla['meses']} meses ({regla['origen']})")
+        print(f"     {regla['motivo']}")
+    print(f"\ncumplidos: {datos['total']}")
+    for fila in datos["cumplidos"]:
+        print(f"  {fila['nombre']} (cliente {fila['cliente_id']}) — sin movimiento desde {fila['ultimo_movimiento']} ({fila['dias_sin_movimiento']} días)")
+    for fila in datos["conservado"]:
+        print(f"  se conserva · {fila['tabla']}: {fila['filas']} fila(s) — {fila['motivo']}")
+    print(f"  aviso: {datos['aviso']}")
+    db.cerrar()
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="openlegal", description="Harness legal chileno con CRM")
     parser.add_argument("--db", help="URL de la base: sqlite:///ruta.db o postgresql://...")
@@ -632,6 +676,16 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--usuario", help="email del usuario que ejecuta")
     p.add_argument("--estudio", type=int)
     p.set_defaults(func=cmd_seguridad)
+
+    p = sub.add_parser("retencion", help="cuánto se conserva cada dato y qué plazo está cumplido")
+    p.add_argument("--definir", choices=["datos_de_persona", "documentos"], help="tipo cuyo plazo se declara")
+    p.add_argument("--meses", type=int, help="plazo en meses (con --definir)")
+    p.add_argument("--aplicar", action="store_true", help="anonimiza lo cumplido (sin --escribir, sólo informa)")
+    p.add_argument("--escribir", action="store_true", help="ejecuta la anonimización de verdad")
+    p.add_argument("--motivo", help="motivo de la anonimización; queda en la bitácora")
+    p.add_argument("--usuario", help="email del usuario que ejecuta")
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_retencion)
 
     p = sub.add_parser("cliente", help="clientes")
     sub_c = p.add_subparsers(dest="accion", required=True)

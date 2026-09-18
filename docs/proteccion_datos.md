@@ -86,14 +86,20 @@ Ya implementado y verificado con pruebas:
 Pendiente antes de datos reales de un cliente:
 
 - **Cifrado en reposo** de la base (SQLite: SQLCipher o cifrado de disco; Postgres: `pgcrypto` o
-  disco cifrado) y **respaldo cifrado** con prueba de restauración.
-- **Retención y borrado**: cuánto se conserva cada tipo de dato y cómo se borra o anonimiza el
-  expediente terminado (art. 14 letra d y derecho de supresión).
-- **Segundo factor** para el rol administrador y socio.
-- **Hashes de integridad** de documentos, para poder acreditar que un escrito no cambió.
-- **Operación de borrado y anonimización por titular** en el CRM, con prueba automatizada: es lo que
-  hace ejecutable el derecho de supresión, hoy resuelto a mano (§5 del procedimiento ARSPOB).
-- **Exportación de portabilidad** (JSON o CSV) de todo lo que el sistema tenga de un titular.
+  disco cifrado) y **respaldo cifrado** con prueba de restauración. Es un paso de instalación,
+  no código: no se puede resolver desde la aplicación.
+- **Segundo factor para las cuentas con más acceso** ya está implementado
+  (`openlegal usuario 2fa`), y `openlegal seguridad` dice qué cuentas de socio o
+  administrador todavía no lo tienen. Falta activarlo en el estudio real.
+- **Retención y borrado**: la política existe y es declarable
+  (`openlegal retencion`, ver `docs/retencion.md`). Falta que el estudio fije sus plazos:
+  los del sistema son sugerencias con su anclaje, no decisiones.
+- **Operación de borrado y anonimización por titular** en el CRM con prueba automatizada:
+  hecho (`titulares.anonimizar`, 21 pruebas), y la **exportación de portabilidad**
+  (`titulares.exportar`).
+- **Hashes de integridad** de documentos: hecho (migración 2, `service.registrar_documento`
+  y `service.verificar_documento`), que es lo que permite acreditar que un escrito no cambió.
+- **Alerta de accesos anómalos**: hecha (`openlegal seguridad`, intentos fallidos con umbral).
 
 Ya escritos y enlazados en §2: el aviso de privacidad, el procedimiento ARSPOB, el protocolo de
 brechas, el contrato de encargado y la cláusula para contratos de trabajo. Los cinco se redactaron

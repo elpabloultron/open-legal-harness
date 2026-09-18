@@ -282,8 +282,25 @@ def _migracion_3_segundo_factor(db: DB) -> list[str]:
     return aplicadas
 
 
+def _migracion_4_retencion(db: DB) -> list[str]:
+    """Migración 4: la política de retención que declara el estudio.
+
+    Los plazos no se inventan en el código: viven en la base, con su motivo y su fecha,
+    para que dentro de unos años se pueda saber con qué criterio se anonimizó algo.
+    """
+    db.ejecutar(
+        "CREATE TABLE IF NOT EXISTS retencion_politica ("
+        " tipo TEXT PRIMARY KEY,"
+        " meses INTEGER NOT NULL,"
+        " motivo TEXT,"
+        " actualizado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    return ["CREATE retencion_politica"]
+
+
 MIGRACIONES: list[tuple[int, str, Callable[[DB], list[str]]]] = [
     (1, "esquema_base", _migracion_1_esquema_base),
     (2, "documentos_integridad", _migracion_2_documentos_integridad),
     (3, "segundo_factor", _migracion_3_segundo_factor),
+    (4, "retencion", _migracion_4_retencion),
 ]
