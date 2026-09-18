@@ -7,7 +7,7 @@ volver a correrlos: este documento es una fotografía, no una promesa.
 
 | Repo | Local | Versión | Qué es |
 |---|---|---|---|
-`open-legal-chile` | `~/Escritorio/Ultimaprensa/open-legal-chile` | **1.5.2** (en PyPI) | La suite completa: 64 herramientas MCP, 20 conectores, CLI. **Es el que consume el harness legal.** |
+`open-legal-chile` | `~/Escritorio/Ultimaprensa/open-legal-chile` | **1.5.5** (en PyPI) | La suite completa: 64 herramientas MCP, 15 conectores institucionales (`*_connector.py`), 18 perfiles de agente y CLI. **Es el que consume el harness legal.** |
 `legal-graphify` | `~/Escritorio/Ultimaprensa/legal-graphify` | **0.1.0** | Paquete modular del motor del grafo (core, extractors, visualizer, mcp, agents) con tests propios |
 `graphify` | `~/Escritorio/Ultimaprensa/graphify` | **0.9.61** | **Fork de un proyecto externo** (© 2026 Safi Shamsi y contribuidores, paquete `graphifyy`). Genera `graphify-out/` (grafo de código + AST) |
 
@@ -123,37 +123,48 @@ El harness **sobrevive solo porque lanza el MCP con `cwd=open-legal-chile`**. Si
 
 ## Lo que falta decidir (no lo decide un agente)
 
-**1. ¿Cuál motor es el canónico?** La evidencia dice que el paquete **no puede** serlo hoy: su extractor
-regenera **947 nodos / 1.215 aristas** contra los 967 / 1.366 del monolito (le faltan las 13 vías
-procesales, `comparte_norma` y los atributos `file_type`/`source_file`/`norm_label`), y su archivo de
-datos `legal_knowledge_graph.json` es **un artefacto del monolito**, no un producto suyo: sus pruebas
-pasan porque cargan ese JSON prestado.
+**1. El motor canónico: RESUELTO.** El paquete `legal-graphify` quedó **archivado en GitHub** (`isArchived: true`, 18-09-2026) después de rescatar su única pieza de valor —el parser de artículos de códigos— y arreglarla (su patrón no sobrevivía a una coma, así que sobre un código real encontraba casi ningún artículo). Vive en `open-legal-chile` como `extract_articulos_de_codigo()` e `ingerir_codigo_bcn()`. Un solo motor, un solo repo para el producto.
 
-Además dan respuestas distintas en `god_nodes` (monolito: *Cumplimiento Forzado* 41, *Reivindicatoria*
-37; paquete: *Nulidad de Derecho Público* 10, *Daño Reparable* 7). Y la causa raíz es incómoda:
-**PageRank no corre en ninguno de los dos** porque falta `numpy` en sus entornos, así que cada uno cae
-a un fallback distinto (`degree` vs `in_degree+1`). La etiqueta «PageRank α=0.85» miente en ambos.
+**2. Los números de marketing: RESUELTO Y PUBLICADO.** La página de PyPI (que es el README) decía «85%-95%», «> 80%» y «55 herramientas». Ahora dice el rango medido (**31,9 % a 90,5 %**, mediana 74,1 %) y las 64 herramientas. Todo número publicado sale de `docs/medicion_tokens.json`, se reproduce con `scripts/medir_ahorro_tokens.py` y se coteja con un verificador que además falla si alguien reintroduce una cifra vieja.
 
-| Opción | Esfuerzo | Riesgo para el harness | Veredicto |
-|---|---|---|---|
-**A. El paquete canónico** y `open-legal-chile` depende de él | 16-20 h | alto (colisión de nombre en el venv, contrato de API ES↔EN, republicar 1.5.3) | no hoy |
-**B. El monolito canónico**; el paquete queda archivado y sus 2 piezas útiles se rescatan (`extractors/bcn.py`, los tests) | 1-2 h | **cero** | **recomendado** |
-**C. Los dos vivos con prueba de paridad** | 4-6 h + escribir cada mejora dos veces | medio, y con riesgo de verde falso: 3 de 5 herramientas ya coinciden, así que una prueba laxa certificaría la divergencia en `god_nodes` | solo como red, después de elegir |
+**3. `ci-sync.yml`: sin resolver, y ya no importa.** El evento sigue sin receptor, pero el repo que lo emitía está archivado, así que no hay desincronización posible. **Decide el usuario** si borra el workflow en el repo archivado (es de solo lectura: ya no se puede).
 
-**2. Los números de marketing.** El «85-95%» (docstring, descripción MCP, `README.md:325,488`,
-`docs/index.html`) y el «4.200 → 279 tokens / 93,4%» del README no se reproducen: lo medido es
-**55,9%-93,4%** y **1.200 → 284 (76,3%)**. Decisión: corregir la documentación o cambiar la métrica.
-Ojo: la prueba `test_legal_graphify.py:61` exige ≥70% y `tutela laboral` da 55,9% — hoy pasa por el
-piso inflado que se acaba de arreglar en el cálculo, pero no en el dato de ingesta.
+**4. `numpy` y PageRank: RESUELTO.** `numpy` y `scipy` son dependencias declaradas; el ranking es PageRank real y el payload declara `ordenado_por`, avisando cuando no puede calcularlo. El ranking **cambió** (antes: Cumplimiento Forzado, Reivindicación, Tutela Laboral; ahora: Responsabilidad Extracontractual, Daño Reparable, Dolo Civil) porque el 83 % de los nodos no tiene aristas de salida: PageRank y grado no ordenan igual, y por eso cada entrada trae las dos métricas.
 
-**3. `ci-sync.yml`.** No tiene receptor y `GITHUB_TOKEN` no puede disparar workflows en otro repo (y
-`continue-on-error: true` esconde la falla). Opciones: borrar el job, o poner un PAT con permiso `repo`
-y crear en `open-legal-chile` el workflow que escuche `legal-graphify-updated`. **Decide el usuario.**
+**5. El fork de `graphify`: NO se mantiene.** Es una herramienta de terceros (0.9.63, publicada en PyPI como `graphifyy`) y este proyecto solo **consume** su salida; su commit de showcase quedó **36 commits atrás con historia divergente** y llevaba dentro las cifras falsas (85-95 %, «55 herramientas»), así que enviarlo upstream habría publicado justo lo corregido. El contenido se reescribió con los números medidos en `open-legal-chile/docs/integracion_graphify.md`, que es donde documenta algo propio. Si algún día se quiere reconocimiento en el proyecto original, corresponde un PR corto y factual basado en `upstream/main` — nunca el commit actual.
 
-**4. `numpy` y PageRank.** Instalarlo hace que `nx.pagerank` corra de verdad y **cambiará
-`graphify_god_nodes`** — o sea, el ranking que un agente dogmático usa. Hay que capturar antes/después
-y hacerlo con el harness parado.
+## El agujero que apareció al verificar el paquete publicado
 
-**5. CI del paquete.** Cambiar `.[dev]` por `.[dev,mcp]` deja de saltarse la única prueba del MCP.
-Verificado que pasa con fastmcp 4.0.5, pero `fastmcp>=0.1.0` está sin fijar: el CI puede ponerse rojo
-en un release del upstream.
+Instalando `openlegal-chile` **como lo hace un usuario** (sin clonar el repo) quedó a la vista lo peor de todo: el wheel de PyPI **solo llevaba los módulos**. Las 64 herramientas estaban, pero `graphify_*` respondía «no encontrado» a cualquier tema y `doctrina_search` no tenía índice: las dos funciones que justifican la suite, huecas, y el motor callado. El corpus (352 KB, 58 obras) y el grafo (704 KB) vivían solo en el repositorio.
+
+Corregido en **1.5.4**: `doctrina/` y `data/` se declaran como paquetes de datos (namespace packages), así que setuptools los instala junto a los módulos, en site-packages, que es exactamente donde el motor los busca — sin duplicar archivos ni cambiar la resolución de rutas. El índice FTS5 no viaja: se construye solo en la primera búsqueda. El wheel pasó de 52 a 111 archivos, y se verificó instalándolo en un entorno limpio: 58 obras, 967 nodos / 1.366 aristas, consulta real al 86,6 %, PageRank real y 64 herramientas.
+
+Y ya nada falla en silencio: un grafo vacío o un artefacto ausente dejan aviso con la causa y la salida (1.5.3).
+
+
+## Pendientes reales (al 18-09-2026)
+
+- **CI del paquete**: instalar `.[dev,mcp]` en vez de `.[dev]` para que la única prueba del servidor
+  MCP deje de saltarse en cada corrida. Verificado que pasa con fastmcp 4.0.5, pero
+  `fastmcp>=0.1.0` está sin fijar: conviene anclar la versión antes de meterlo, o el CI puede caerse
+  con un release del upstream.
+- **Feriados 2027** del CRM sin consolidar: el cómputo del harness avisa cuando un plazo los pisa, en
+  vez de inventar el feriado que falta (deliberado).
+- **Criterio del sábado** para el estudio: el CRM lo parametriza (`sabado_habil`) y escribe la regla
+  aplicada en el resultado; falta que el estudio decida si cuenta sábados como hábiles.
+- **Fecha real de la cédula** en el caso C-1234-2026: el 01-10/02-10-2026 es provisional hasta tener
+  la fecha de la diligencia.
+
+## Historial: cómo se llegó acá
+
+La primera sospecha fue que los dos motores estaban **duplicados** (un archivo suelto contra un
+paquete modular). La auditoría mostró algo peor: eran **dos implementaciones distintas** —compartían
+un solo nombre de método de 19 y 18, `__init__`— y el paquete, aunque más ordenado, **no podía
+reconstruir el grafo** (947 nodos / 1.215 aristas sin vías procesales ni atributos de tipo contra
+967 / 1.366). Su archivo de datos era un artefacto del otro repo, y por eso sus pruebas pasaban.
+De ahí las tres opciones que se evaluaron (paquete canónico: 16-20 h y riesgo alto; monolito canónico
+con el paquete archivado: 1-2 h y riesgo cero; los dos vivos con prueba de paridad: costo permanente
+y riesgo de verde falso). Se eligió la segunda, y la prueba de paridad quedó descartada como red
+precisamente porque 3 de las 5 herramientas ya coincidían en números: una prueba laxa habría
+certificado la divergencia en `god_nodes` en lugar de evitarla.
+
