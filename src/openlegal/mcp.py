@@ -412,10 +412,10 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
     db, usuario = ctx.db, ctx.usuario
 
     if nombre == "crm_estudio":
-        conteos = {
-            tabla: db.uno(f"SELECT COUNT(*) AS total FROM {tabla}")["total"]
-            for tabla in ("clientes", "causas", "plazos", "audiencias", "transferencias_ia")
-        }
+        conteos = {}
+        for tabla in ("clientes", "causas", "plazos", "audiencias", "transferencias_ia"):
+            fila = db.uno(f"SELECT COUNT(*) AS total FROM {tabla}")
+            conteos[tabla] = (fila or {}).get("total", 0)
         return {
             "usuario": usuario["nombre"],
             "rol": usuario["rol"],
@@ -510,14 +510,14 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
         desde = argumentos.get("desde")
         if desde is not None:
             desde = fecha_iso(desde, "desde").isoformat()
-        causa_id = argumentos.get("causa_id")
+        causa_pedida = argumentos.get("causa_id")
         hoy = dt.date.today()
-        if causa_id:
-            auth.exigir(db, usuario, "plazo.leer", int(causa_id))
+        if causa_pedida:
+            auth.exigir(db, usuario, "plazo.leer", int(causa_pedida))
             filas = db.todos(
                 "SELECT * FROM plazos WHERE causa_id = ? AND estado = 'pendiente' "
                 "AND fecha_vencimiento IS NOT NULL ORDER BY fecha_vencimiento",
-                (int(causa_id),),
+                (int(causa_pedida),),
             )
         else:
             filas = service.vencimientos(db, usuario, desde, dias)
@@ -669,11 +669,11 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
         return service.estado_ia(db, usuario, int(argumentos["causa_id"]))
 
     if nombre == "crm_ia_redactar":
-        causa_id = argumentos.get("causa_id")
+        causa_pedida = argumentos.get("causa_id")
         terminos = list(argumentos.get("terminos") or [])
-        if causa_id:
-            auth.exigir(db, usuario, "causa.leer", int(causa_id))
-            terminos += ia.terminos_de_causa(db, int(causa_id))
+        if causa_pedida:
+            auth.exigir(db, usuario, "causa.leer", int(causa_pedida))
+            terminos += ia.terminos_de_causa(db, int(causa_pedida))
         avisos: list[str] = []
         limpio, mapa = ia.redactar(str(argumentos["texto"]), terminos, avisos=avisos)
         return {

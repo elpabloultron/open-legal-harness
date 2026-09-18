@@ -69,10 +69,68 @@ enchufa el CRM por sus puntos de extensión públicos.
 | Paso | Estado |
 |---|---|
 | 1. `dsh` instalado y sirviendo la UI | ✅ verificado (`npm install -g --allow-scripts=... @deepseek-ai/dsh`, `dsh web --port 8799`) |
-| 2. CRM local servido por `openlegal serve` | ✅ verificado (25/25 pruebas, datos reales en SQLite y PostgreSQL) |
+| 2. CRM local servido por `openlegal serve` | ✅ verificado (106 pruebas, datos reales en SQLite y PostgreSQL) |
 | 3. Fila «CRM Jurídico» bajo *New session* + su panel | ✅ verificado en la GUI real (ver abajo) |
-| 4. MCP: `crm_*` propio + los 64 tools de open-legal-chile | pendiente |
-| 5. Perfil `legal` con todo montado y patch layer | ✅ el perfil monta el plugin; falta sumarle los MCP |
+| 4. MCP: las 18 herramientas del CRM + las 69 de open-legal-chile | ✅ verificado por stdio y en vivo (el perfil arranca los dos servidores) |
+| 5. Perfil `legal` con las cuatro piezas y la marca propia | ✅ verificado (`--dump-config` las muestra; lo monta `scripts/montar_en_dsh.sh`) |
+
+### Montarlo en un paso (`scripts/montar_en_dsh.sh`)
+
+```bash
+scripts/montar_en_dsh.sh                        # perfil `legal`, puerto 8801
+scripts/montar_en_dsh.sh --perfil otro --puerto 8890
+scripts/montar_en_dsh.sh --sin-biblioteca       # sólo el CRM, sin open-legal-chile
+```
+
+Hace cuatro cosas y después las verifica con `--dump-config`:
+
+1. comprueba que `dsh` esté instalado (y si no, dice el comando exacto, con el flag
+   `--allow-scripts` que no es opcional);
+2. deja el CRM instalado en `.venv` del repo, con su base y su esquema al día;
+3. monta los dos plugins de interfaz (la fila del CRM y la marca);
+4. escribe la capa de perfil con un servidor MCP por cada fuente de herramientas.
+
+Es idempotente: si algo ya estaba, no lo duplica. Y es un script y no un archivo para
+copiar por una razón concreta: **las rutas de los servidores MCP son absolutas y
+distintas en cada equipo**, y el archivo de perfil no admite variables. El script las
+resuelve en la máquina donde corre.
+
+La primera vez puede tardar unos minutos: crear el perfil dispara un `pnpm install` de
+la pila de plugins del harness.
+
+### La marca (`dsh-brand/`)
+
+Paquete `@openlegal/dsh-client-ui-brand-legal`: reemplaza el signo del harness (el pez)
+y su nombre por **la balanza** y **«Open Legal Harness»**, en los tres lugares donde la
+interfaz declara marca (el signo y el nombre del sidebar, y el signo grande del héroe).
+Los tres slots son de tipo `single`, y un plugin externo tiene precedencia: por eso la
+marca toma el relevo **sin desactivar** la oficial — si el plugin se desmonta, el pez
+vuelve solo. El signo es SVG con `currentColor`, así que hereda el tema claro u oscuro;
+el mismo trazo está suelto en `dsh-brand/assets/balanza.svg` para favicón, cartas y
+documentos.
+
+### Cómo se actualiza esto (y por qué la marca no se pierde)
+
+Acá conviven tres cosas de dueños distintos, y eso explica el resto:
+
+| | Quién | Cómo se actualiza |
+|---|---|---|
+| **DeepSeek Harness** (`dsh`) | DeepSeek, MIT | `npm install -g ... @deepseek-ai/dsh` y reiniciar el perfil |
+| **Este repo** (CRM + los dos plugins) | este proyecto, Apache-2.0 | `git pull` |
+| **open-legal-chile** (biblioteca jurídica) | este proyecto, Apache-2.0 | `pip install -U openlegal-chile` |
+
+`dsh` **no se forkea**: se instala oficial y se engancha por los puntos de extensión que
+publica. La consecuencia práctica es que **las actualizaciones del harness principal
+siguen llegando y la marca propia no se pierde**: los plugins no dependen de cómo es
+`dsh` por dentro, sino de los *slots* que declara; al actualizar, el harness mejora por
+debajo y la balanza sigue arriba. Los dos plugins declaran su límite de compatibilidad
+(`dsh >=0.1.5-rc.1`) para que un cambio de contrato se note en el acto, y el build falla
+si el artefacto no cumple el contrato del cargador.
+
+El único riesgo real: `dsh` está en *release candidate* (0.1.5-rc.2), así que esos puntos
+pueden moverse. Si una versión futura renombra o elimina un slot, el signo desaparece y
+vuelve el pez; se detecta en un minuto (`node dsh-brand/scripts/verificar-artefacto.mjs`)
+y el arreglo es en nuestro plugin, nunca en un fork.
 
 ### El plugin del sidebar (`dsh-plugin/`)
 

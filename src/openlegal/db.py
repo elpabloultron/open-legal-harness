@@ -49,11 +49,11 @@ class DB:
                 conn.execute("PRAGMA journal_mode = WAL")
             return conn
         try:
-            import psycopg  # type: ignore
+            import psycopg
         except ModuleNotFoundError as exc:  # pragma: no cover - depende del entorno
             raise RuntimeError(
                 "El modo oficina requiere PostgreSQL: instala el driver con "
-                "`pip install 'open-legal-crm[postgres]'`."
+                "`pip install 'open-legal-harness[postgres]'`."
             ) from exc
         return psycopg.connect(self.url, row_factory=psycopg.rows.dict_row)
 

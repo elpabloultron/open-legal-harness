@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pruebas:
+    name: pruebas · Python ${{ matrix.python }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # El núcleo es sólo librería estándar: no hay nada que instalar.
+      - name: La suite
+        run: python -m unittest discover -s tests -q
+
+  estilo:
+    name: estilo y tipos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: ruff (el estándar vive en pyproject, no en la máquina de nadie)
+        run: |
+          python -m pip install --quiet ruff
+          python -m ruff check src tests
+      - name: mypy
+        run: |
+          python -m pip install --quiet mypy
+          python -m mypy src/openlegal
+
+  paquete:
+    name: el wheel trae sus datos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Construir
+        run: |
+          python -m pip install --quiet build
+          python -m build
+      # Esta es la prueba que destapó un defecto real: el wheel salía sin el esquema,
+      # sin el calendario de feriados y sin el panel, o sea una CLI incapaz de crear su
+      # base, de calcular un plazo (los feriados son la mitad del art. 66 CPC) y de
+      # levantar su interfaz. Sin este paso, el paquete puede volver a salir incompleto
+      # y nadie se entera hasta que alguien lo instala.
+      - name: Los datos tienen que estar adentro
+        run: |
+          python - <<'PY'
+          import glob
+          import sys
+          import zipfile
+
+          rueda = glob.glob("dist/*.whl")[0]
+          with zipfile.ZipFile(rueda) as z:
+              nombres = z.namelist()
+          obligatorios = ["schema.sql", "feriados_cl.json", "static/panel.html", "static/panel.css", "static/panel.js"]
+          faltan = [n for n in obligatorios if not any(x.endswith(n) for x in nombres)]
+          if faltan:
+              sys.exit(f"el wheel salió sin: {', '.join(faltan)}")
+          print(f"el wheel trae los {len(obligatorios)} datos obligatorios")
+          PY
+      - name: Instalarlo en limpio y crear una base
+        run: |
+          python -m venv /tmp/limpio
+          /tmp/limpio/bin/pip install --quiet dist/*.whl
+          /tmp/limpio/bin/openlegal --db sqlite:////tmp/prueba.db init
+          /tmp/limpio/bin/openlegal --db sqlite:////tmp/prueba.db estudio crear --nombre "Estudio CI" --modo oficina
+          /tmp/limpio/bin/python -c "
+          from openlegal import plazos
+          feriados = plazos.cargar_feriados(2026)
+          assert len(feriados) > 10, feriados
+          print(f'calendario: {len(feriados)} feriados de 2026')"
+
+  plugins:
+    name: los plugins de la interfaz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # El build FALLA si el artefacto no respeta el contrato del cargador del navegador
+      # (el envoltorio, los externos de React, los slots de la marca, el patch del
+      # perfil). Es la red que avisa si una actualización de dsh mueve un punto de
+      # enganche: en ese caso el arreglo es en nuestro plugin, nunca en un fork.
+      - name: Plugin del CRM
+        working-directory: dsh-plugin
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm test
+          npm run typecheck
+      - name: Plugin de la marca
+        working-directory: dsh-brand
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm test
+          npm run typecheck

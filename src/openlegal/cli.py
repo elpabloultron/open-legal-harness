@@ -20,9 +20,9 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import getpass
-import json
 import pathlib
 import sys
+from typing import NoReturn
 
 from . import auth, ia, plazos, service, titulares
 from .db import DB
@@ -68,7 +68,7 @@ def _usuario_actual(db: DB, estudio_id: int, email: str | None) -> dict:
     return usuario
 
 
-def salida_error(mensaje: str) -> None:
+def salida_error(mensaje: str) -> NoReturn:
     print(f"error: {mensaje}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -294,6 +294,10 @@ def cmd_ia_redactar(args) -> None:
     db = _ctx(args)
     estudio_id = _estudio_actual(db, args.estudio)
     usuario = _usuario_actual(db, estudio_id, args.usuario)
+    if args.causa:
+        # Los términos de la causa son nombres y RUT de las personas del expediente:
+        # para verlos hay que tener acceso a ESA causa, no sólo al estudio.
+        auth.exigir(db, usuario, "causa.leer", args.causa)
     terminos = ia.terminos_de_causa(db, args.causa) if args.causa else args.termino
     limpio, mapa = ia.redactar(_texto_de(args), terminos)
     print("--- texto minimizado (esto es lo que se manda al modelo) ---")
@@ -428,7 +432,7 @@ def cmd_serve(args) -> None:
     try:
         import uvicorn
     except ModuleNotFoundError:
-        salida_error("falta el servidor web: instala con `pip install 'open-legal-crm[ui]'`")
+        salida_error("falta el servidor web: instala con `pip install 'open-legal-harness[ui]'`")
     from .web import crear_app
 
     app = crear_app(getattr(args, "db", None), args.token)

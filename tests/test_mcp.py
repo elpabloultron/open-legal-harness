@@ -18,7 +18,7 @@ sys.path.insert(0, str(RAIZ / "src"))
 
 from openlegal import auth, service  # noqa: E402
 from openlegal.db import DB  # noqa: E402
-from openlegal.mcp import Contexto, HERRAMIENTAS, responder, servir  # noqa: E402
+from openlegal.mcp import HERRAMIENTAS, Contexto, responder, servir  # noqa: E402
 
 
 class BaseMCP(unittest.TestCase):
@@ -383,7 +383,7 @@ class TestErroresDeArgumento(BaseMCP):
         salida = io.StringIO()
         servir(entrada, salida, self.ctx)
 
-        respuestas = [json.loads(l) for l in salida.getvalue().strip().splitlines()]
+        respuestas = [json.loads(linea) for linea in salida.getvalue().strip().splitlines()]
         self.assertEqual(len(respuestas), 4, "el bucle tiene que contestar las cuatro y seguir vivo")
         self.assertEqual(respuestas[-1]["id"], 3)
         self.assertIn("tools", respuestas[-1]["result"])
