@@ -263,7 +263,27 @@ def _migracion_2_documentos_integridad(db: DB) -> list[str]:
     return aplicadas
 
 
+def _migracion_3_segundo_factor(db: DB) -> list[str]:
+    """Migración 3: el segundo factor de cada usuario (secreto TOTP y si está activo).
+
+    El secreto se guarda por usuario y no se expone nunca por herramienta: se entrega una
+    vez, cuando se enrola, para cargarlo en la app de autenticación.
+    """
+    if "usuarios" not in db.tablas():
+        return []
+    aplicadas = []
+    for columna, definicion in (
+        ("totp_secret", "TEXT"),
+        ("totp_activo", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if columna not in db.columnas("usuarios"):
+            db.ejecutar(f"ALTER TABLE usuarios ADD COLUMN {columna} {definicion}")
+            aplicadas.append(f"ALTER usuarios.{columna}")
+    return aplicadas
+
+
 MIGRACIONES: list[tuple[int, str, Callable[[DB], list[str]]]] = [
     (1, "esquema_base", _migracion_1_esquema_base),
     (2, "documentos_integridad", _migracion_2_documentos_integridad),
+    (3, "segundo_factor", _migracion_3_segundo_factor),
 ]

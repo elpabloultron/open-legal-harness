@@ -13,7 +13,7 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from openlegal import auth, service  # noqa: E402
-from openlegal.db import DB, _migracion_1_esquema_base  # noqa: E402
+from openlegal.db import DB, MIGRACIONES, _migracion_1_esquema_base  # noqa: E402
 
 
 class BaseMigrable(unittest.TestCase):
@@ -60,9 +60,11 @@ class TestMigracionesVersionadas(BaseMigrable):
         self.assertIn("migración 1: esquema_base", aplicadas)
         self.assertIn("migración 2: documentos_integridad", aplicadas)
         self.assertEqual(self.db.migraciones_pendientes(), [], "no puede quedar nada pendiente")
-        # Y queda el registro, con su fecha: eso es lo que antes no existía.
+        # Y queda el registro, con su fecha: eso es lo que antes no existía. Se compara
+        # contra el registro de migraciones, no contra una lista escrita a mano, para que
+        # agregar una migración no obligue a tocar esta prueba.
         aplicadas_en_bd = self.db.migraciones_aplicadas()
-        self.assertEqual(sorted(aplicadas_en_bd), [1, 2])
+        self.assertEqual(sorted(aplicadas_en_bd), [version for version, _, _ in MIGRACIONES])
         self.assertTrue(aplicadas_en_bd[1]["aplicada_en"])
         # La migración 2 trae las columnas del hash.
         self.assertIn("hash_sha256", self.db.columnas("documentos"))

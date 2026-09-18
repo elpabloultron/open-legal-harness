@@ -169,6 +169,9 @@ function vistaLogin(mensaje) {
       <p class="meta">${escapar(mensaje || "Usa tu correo del estudio y tu contraseña.")}</p>
       <label>Correo<input name="email" type="email" required autocomplete="username" /></label>
       <label>Contraseña<input name="password" type="password" required autocomplete="current-password" /></label>
+      <label>Código de verificación
+        <input name="codigo" inputmode="numeric" autocomplete="one-time-code" placeholder="sólo si tienes segundo factor" />
+      </label>
       <button class="accion" type="submit">Entrar</button>
       <p class="meta" style="margin:8px 0 0">
         Si trabajas solo, no necesitas contraseña: abre el panel con la URL que imprime

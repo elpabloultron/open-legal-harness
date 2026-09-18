@@ -15,6 +15,7 @@ import hmac
 import os
 import secrets
 
+from . import seguridad
 from .db import DB
 
 ROLES = ("socio", "administrador", "abogado", "paralegal", "administrativo", "cliente")
@@ -64,6 +65,15 @@ PERMISOS: dict[str, set[str]] = {
 
 class ErrorPermiso(PermissionError):
     pass
+
+
+class ErrorSegundoFactor(ValueError):
+    """La contraseña está bien, pero falta el código o no sirve.
+
+    Se distingue de un fallo de credenciales a propósito: no es lo mismo "esta persona no
+    probó bien su contraseña" que "esta persona sabe la contraseña y no tiene el segundo
+    factor". Lo segundo, en un CRM con expedientes de terceros, es una alarma.
+    """
 
 
 # --------------------------------------------------------------------- claves
@@ -119,18 +129,96 @@ def crear_usuario(
     return usuario_id
 
 
-def autenticar(db: DB, email: str, password: str) -> dict | None:
+def autenticar(db: DB, email: str, password: str, codigo: str | None = None) -> dict | None:
+    """Verifica credenciales y, si el usuario tiene segundo factor, también el código.
+
+    Falla cerrado: si el segundo factor está activo y no llega un código válido, no hay
+    sesión — ni siquiera con la contraseña correcta.
+    """
     usuario = db.uno("SELECT * FROM usuarios WHERE email = ? AND activo = 1", (email.lower(),))
     if not usuario or not usuario["password_hash"]:
+        # El intento fallido deja rastro aunque la cuenta no exista: es la mitad de la
+        # alerta de accesos anómalos (nadie debería poder probar contraseñas en silencio).
+        auditar(db, None, None, "login.fallido", "usuarios", None, f"{email.lower()} · cuenta inexistente o inactiva")
         return None
     if not verificar_password(password, usuario["password_hash"]):
+        auditar(
+            db, usuario["estudio_id"], usuario["id"], "login.fallido", "usuarios", usuario["id"],
+            f"{email.lower()} · contraseña incorrecta",
+        )
         return None
+    if usuario.get("totp_activo"):
+        if not seguridad.codigo_valido(usuario.get("totp_secret"), codigo):
+            auditar(
+                db, usuario["estudio_id"], usuario["id"], "login.2fa.fallido", "usuarios",
+                usuario["id"], f"{email.lower()} · contraseña correcta, código ausente o inválido",
+            )
+            raise ErrorSegundoFactor("código de verificación incorrecto o vencido")
     token = secrets.token_urlsafe(32)
     expira = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=12)).isoformat()
     db.insertar("sesiones", {"usuario_id": usuario["id"], "token": token, "expira_en": expira})
     usuario.pop("password_hash", None)
     usuario["token"] = token
     return usuario
+
+
+# ------------------------------------------------------------- segundo factor
+def activar_segundo_factor(db: DB, actor: dict, email: str) -> dict:
+    """Enrola el segundo factor de un usuario y devuelve su secreto, una sola vez.
+
+    El secreto se entrega acá para cargarlo en la app de autenticación. No vuelve a
+    mostrarse en ninguna consulta: si se pierde el teléfono, se enrola de nuevo.
+    """
+    exigir(db, actor, "usuario.gestionar")
+    fila = db.uno(
+        "SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (actor["estudio_id"], email.lower())
+    )
+    if not fila:
+        raise ValueError(f"no existe el usuario {email} en el estudio {actor['estudio_id']}")
+    secreto = seguridad.nuevo_secreto()
+    db.ejecutar("UPDATE usuarios SET totp_secret = ?, totp_activo = 1 WHERE id = ?", (secreto, fila["id"]))
+    auditar(
+        db, actor["estudio_id"], actor["id"], "usuario.2fa.activar", "usuarios", fila["id"],
+        f"{email.lower()} por {actor['email']}",
+    )
+    return {
+        "email": email.lower(),
+        "secreto": secreto,
+        "uri": seguridad.uri_otpauth(secreto, email.lower()),
+        "digitos": seguridad.DIGITOS,
+        "periodo_segundos": seguridad.PERIODO,
+    }
+
+
+def desactivar_segundo_factor(db: DB, actor: dict, email: str, motivo: str) -> None:
+    """Apaga el segundo factor de un usuario. Exige motivo: queda en la bitácora."""
+    exigir(db, actor, "usuario.gestionar")
+    if not motivo or not motivo.strip():
+        raise ValueError("falta el motivo: apagar el segundo factor tiene que ser explicable")
+    fila = db.uno(
+        "SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (actor["estudio_id"], email.lower())
+    )
+    if not fila:
+        raise ValueError(f"no existe el usuario {email} en el estudio {actor['estudio_id']}")
+    db.ejecutar("UPDATE usuarios SET totp_secret = NULL, totp_activo = 0 WHERE id = ?", (fila["id"],))
+    auditar(
+        db, actor["estudio_id"], actor["id"], "usuario.2fa.desactivar", "usuarios", fila["id"],
+        f"{email.lower()} · motivo: {motivo.strip()}",
+    )
+
+
+def estado_segundo_factor(db: DB, actor: dict) -> list[dict]:
+    """Quién tiene segundo factor en el estudio. Para el panel de seguridad."""
+    exigir(db, actor, "usuario.gestionar")
+    filas = db.todos(
+        "SELECT u.email, u.nombre, u.rol, u.activo, u.totp_activo FROM usuarios u "
+        "WHERE u.estudio_id = ? ORDER BY u.rol, u.email",
+        (actor["estudio_id"],),
+    )
+    return [
+        {**dict(fila), "esperado": fila["rol"] in ("socio", "administrador")}
+        for fila in filas
+    ]
 
 
 def usuario_por_token(db: DB, token: str) -> dict | None:

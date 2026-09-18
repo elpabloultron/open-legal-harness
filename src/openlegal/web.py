@@ -61,6 +61,8 @@ class NuevoPlazo(BaseModel):
 class Credenciales(BaseModel):
     email: str
     password: str
+    #: Código del segundo factor (TOTP). Opcional: sólo lo piden las cuentas que lo tienen.
+    codigo: str | None = None
 
 
 def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
@@ -170,10 +172,14 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
     @app.post("/api/login")
     def api_login(datos: Credenciales, respuesta: Response):
         with abrir_db() as db:
-            usuario = auth.autenticar(db, datos.email, datos.password)
+            try:
+                # `autenticar` ya deja en la bitácora el fallo de credenciales y el fallo
+                # del segundo factor: acá no se vuelve a registrar, o el contador de
+                # intentos de la alerta contaría dos veces el mismo intento.
+                usuario = auth.autenticar(db, datos.email, datos.password, datos.codigo)
+            except auth.ErrorSegundoFactor as exc:
+                raise HTTPException(status_code=401, detail=str(exc)) from exc
             if not usuario:
-                # El intento fallido también se registra: sirve para detectar abuso.
-                auth.auditar(db, None, None, "login.fallido", "usuarios", None, datos.email.lower()[:80])
                 raise HTTPException(status_code=401, detail="correo o contraseña incorrectos")
             token_sesion = usuario.pop("token")
             respuesta.set_cookie(COOKIE_SESION, token_sesion, httponly=True, samesite="strict")

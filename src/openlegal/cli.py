@@ -24,7 +24,7 @@ import pathlib
 import sys
 from typing import NoReturn
 
-from . import auth, ia, plazos, service, titulares
+from . import auth, ia, plazos, seguridad, service, titulares
 from .db import DB, MIGRACIONES
 
 
@@ -517,6 +517,56 @@ def cmd_migraciones(args) -> None:
     db.cerrar()
 
 
+def cmd_usuario_2fa(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    actor = _usuario_actual(db, estudio_id, args.actor)
+    if args.estado:
+        print("segundo factor por usuario:")
+        for fila in auth.estado_segundo_factor(db, actor):
+            marca = "activo" if fila["totp_activo"] else ("FALTA" if fila["esperado"] else "—")
+            print(f"  {fila['email']:32s} {fila['rol']:15s} {marca}")
+        return
+    if args.desactivar:
+        auth.desactivar_segundo_factor(db, actor, args.email, args.motivo or "")
+        print(f"segundo factor apagado para {args.email.lower()}")
+        return
+    informe = auth.activar_segundo_factor(db, actor, args.email)
+    print(f"segundo factor activado para {informe['email']}")
+    print(f"  secreto: {informe['secreto']}")
+    print(f"  uri:     {informe['uri']}")
+    print("  escanéala con la app de autenticación (Google Authenticator, Aegis, 1Password…)")
+    print(f"  son {informe['digitos']} dígitos que cambian cada {informe['periodo_segundos']} segundos")
+    print("  el secreto no se vuelve a mostrar: si se pierde el teléfono, se enrola de nuevo")
+
+
+def cmd_seguridad(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    informe = seguridad.intentos_fallidos(db, minutos=args.minutos, estudio_id=estudio_id)
+    print(f"intentos fallidos en los últimos {informe['ventana_minutos']} minutos: {informe['total']}")
+    if informe["por_cuenta"]:
+        print("por cuenta:")
+        for cuenta, veces in sorted(informe["por_cuenta"].items(), key=lambda x: -x[1]):
+            print(f"  {veces:>4}  {cuenta}")
+    if informe["por_motivo"]:
+        print("por motivo:")
+        for motivo, veces in sorted(informe["por_motivo"].items(), key=lambda x: -x[1]):
+            print(f"  {veces:>4}  {motivo}")
+    if informe["total"] == 0:
+        print("nadie ha fallado: o no hubo intentos, o todos entraron")
+    elif informe["sospechoso"]:
+        print(f"AVISO: pasó el umbral de {informe['umbral']} intentos. Revisa quién y desde dónde.")
+    # El estado del segundo factor completa el cuadro: un estudio con socios sin 2FA es
+    # una puerta abierta, y se dice acá en vez de esperar a que alguien se acuerde.
+    faltantes = [f for f in auth.estado_segundo_factor(db, usuario) if f["esperado"] and not f["totp_activo"]]
+    if faltantes:
+        print(f"segundo factor pendiente en {len(faltantes)} cuenta(s) de socio o administrador:")
+        for fila in faltantes:
+            print(f"  {fila['email']} ({fila['rol']})")
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="openlegal", description="Harness legal chileno con CRM")
     parser.add_argument("--db", help="URL de la base: sqlite:///ruta.db o postgresql://...")
@@ -558,6 +608,20 @@ def construir_parser() -> argparse.ArgumentParser:
     pu.add_argument("--email", required=True)
     pu.add_argument("--estudio", type=int)
     pu.set_defaults(func=cmd_usuario_desactivar)
+    pu = sub_u.add_parser("2fa", help="segundo factor (TOTP) de un usuario: enrolar, apagar o ver estado")
+    pu.add_argument("--email", help="usuario a enrolar (no hace falta con --estado)")
+    pu.add_argument("--estado", action="store_true", help="muestra quién tiene segundo factor en el estudio")
+    pu.add_argument("--desactivar", action="store_true", help="lo apaga (exige --motivo)")
+    pu.add_argument("--motivo", help="por qué se apaga; queda en la bitácora")
+    pu.add_argument("--actor", help="email de quien ejecuta (debe poder gestionar usuarios)")
+    pu.add_argument("--estudio", type=int)
+    pu.set_defaults(func=cmd_usuario_2fa)
+
+    p = sub.add_parser("seguridad", help="accesos: intentos fallidos y estado del segundo factor")
+    p.add_argument("--minutos", type=int, default=15)
+    p.add_argument("--usuario", help="email del usuario que ejecuta")
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_seguridad)
 
     p = sub.add_parser("cliente", help="clientes")
     sub_c = p.add_subparsers(dest="accion", required=True)
