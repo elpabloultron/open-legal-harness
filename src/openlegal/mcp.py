@@ -41,6 +41,53 @@ from .db import DB
 PROTOCOLO = "2026-07-28"
 
 
+class ErrorArgumento(ValueError):
+    """Argumento mal formado. El mensaje debe decirle al agente qué se esperaba.
+
+    Ojo: no es lo mismo que un error de negocio. Si el agente se equivocó en el
+    formato puede corregirse solo; si le falta un dato del expediente, tiene que
+    preguntarle al abogado. El texto del mensaje es lo único que va a leer.
+    """
+
+
+def _error(ident, mensaje: str) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": ident,
+        "result": {"content": [{"type": "text", "text": mensaje}], "isError": True},
+    }
+
+
+def fecha_iso(valor, campo: str) -> dt.date:
+    """Fecha ISO obligatoria. Un 'ayer' o un None tienen que explicarse, no reventar."""
+    if isinstance(valor, dt.date):
+        return valor
+    if not isinstance(valor, str) or not valor.strip():
+        raise ErrorArgumento(
+            f"'{campo}' debe ser una fecha en formato YYYY-MM-DD (por ejemplo 2026-09-17); "
+            f"llegó: {valor!r}"
+        )
+    try:
+        return dt.date.fromisoformat(valor.strip())
+    except ValueError as exc:
+        raise ErrorArgumento(
+            f"'{campo}' no es una fecha real: {valor!r}. Se espera YYYY-MM-DD (por ejemplo 2026-09-17)."
+        ) from exc
+
+
+def entero(valor, campo: str, minimo: int | None = None) -> int:
+    """Entero obligatorio, con mensaje útil cuando llega basura."""
+    if isinstance(valor, bool) or not isinstance(valor, (int, str, float)):
+        raise ErrorArgumento(f"'{campo}' debe ser un número entero; llegó: {valor!r}")
+    try:
+        numero = int(valor)
+    except (TypeError, ValueError) as exc:
+        raise ErrorArgumento(f"'{campo}' debe ser un número entero; llegó: {valor!r}") from exc
+    if minimo is not None and numero < minimo:
+        raise ErrorArgumento(f"'{campo}' debe ser mayor o igual a {minimo}; llegó: {numero}")
+    return numero
+
+
 # --------------------------------------------------------------------- contexto
 class Contexto:
     """Base y usuario con el que actúa el agente (por variables de entorno)."""
@@ -351,16 +398,22 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
         }
 
     if nombre == "crm_plazo_calcular":
-        resultado = plazos.vencimiento(
-            dt.date.fromisoformat(str(argumentos["notificacion"])), int(argumentos["dias"])
-        )
-        anio = dt.date.fromisoformat(str(argumentos["notificacion"])).year
-        return {**resultado, "feriados_pendientes_de_validacion": plazos.feriados_por_validar(anio)}
+        notificacion = fecha_iso(argumentos.get("notificacion"), "notificacion")
+        dias_habiles = entero(argumentos.get("dias"), "dias", minimo=1)
+        resultado = plazos.vencimiento(notificacion, dias_habiles)
+        return {**resultado, "feriados_pendientes_de_validacion": plazos.feriados_por_validar(notificacion.year)}
 
     if nombre == "crm_plazo_crear":
+        descripcion = str(argumentos.get("descripcion") or "").strip()
+        if not descripcion:
+            raise ErrorArgumento(
+                "'descripcion' no puede ir vacía: escribe qué resolución abre el plazo "
+                "(por ejemplo 'Contestar demanda — traslado de 10 días hábiles')."
+            )
         resultado = service.crear_plazo(
-            db, usuario, int(argumentos["causa_id"]), str(argumentos["descripcion"]),
-            dias=int(argumentos["dias"]), fecha_notificacion=str(argumentos["notificacion"]),
+            db, usuario, entero(argumentos.get("causa_id"), "causa_id", minimo=1), descripcion,
+            dias=entero(argumentos.get("dias"), "dias", minimo=1),
+            fecha_notificacion=fecha_iso(argumentos.get("notificacion"), "notificacion").isoformat(),
             tipo=str(argumentos.get("tipo") or "judicial"),
             es_fatal=bool(argumentos.get("es_fatal", True)),
         )
@@ -371,8 +424,10 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
         }
 
     if nombre == "crm_plazo_listar":
-        dias = int(argumentos.get("dias") or 30)
+        dias = entero(argumentos.get("dias") or 30, "dias", minimo=1)
         desde = argumentos.get("desde")
+        if desde is not None:
+            desde = fecha_iso(desde, "desde").isoformat()
         causa_id = argumentos.get("causa_id")
         hoy = dt.date.today()
         if causa_id:
@@ -389,17 +444,27 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
         return {"total": len(filas), "plazos": filas}
 
     if nombre == "crm_plazo_cumplido":
-        service.marcar_cumplido(db, usuario, int(argumentos["plazo_id"]))
-        return {"ok": True, "plazo_id": int(argumentos["plazo_id"])}
+        plazo_marcado = entero(argumentos.get("plazo_id"), "plazo_id", minimo=1)
+        service.marcar_cumplido(db, usuario, plazo_marcado)
+        return {"ok": True, "plazo_id": plazo_marcado}
 
     if nombre == "crm_plazo_actualizar":
+        motivo = str(argumentos.get("motivo") or "").strip()
+        if not motivo:
+            raise ErrorArgumento(
+                "'motivo' es obligatorio: explica por qué se corrige el plazo. Queda en la "
+                "bitácora y es lo que después permite justificar un vencimiento rectificado."
+            )
         resultado = service.actualizar_plazo(
-            db, usuario, int(argumentos["plazo_id"]),
+            db, usuario, entero(argumentos.get("plazo_id"), "plazo_id", minimo=1),
             descripcion=argumentos.get("descripcion"),
-            dias=int(argumentos["dias"]) if argumentos.get("dias") is not None else None,
-            fecha_notificacion=argumentos.get("notificacion"),
+            dias=entero(argumentos["dias"], "dias", minimo=1) if argumentos.get("dias") is not None else None,
+            fecha_notificacion=(
+                fecha_iso(argumentos["notificacion"], "notificacion").isoformat()
+                if argumentos.get("notificacion") is not None else None
+            ),
             es_fatal=argumentos.get("es_fatal"),
-            motivo=argumentos.get("motivo"),
+            motivo=motivo,
         )
         calculo = resultado.get("calculo") or {}
         return {
@@ -411,10 +476,16 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
         }
 
     if nombre == "crm_plazo_cancelar":
+        motivo_cancelar = str(argumentos.get("motivo") or "").strip()
+        if not motivo_cancelar:
+            raise ErrorArgumento(
+                "'motivo' es obligatorio: di por qué el plazo deja de ser exigible "
+                "(está duplicado, el proveído dice otra cosa, se notificó distinto)."
+            )
         service.cancelar_plazo(
-            db, usuario, int(argumentos["plazo_id"]), str(argumentos["motivo"])
+            db, usuario, entero(argumentos.get("plazo_id"), "plazo_id", minimo=1), motivo_cancelar
         )
-        return {"ok": True, "plazo_id": int(argumentos["plazo_id"])}
+        return {"ok": True, "plazo_id": entero(argumentos.get("plazo_id"), "plazo_id", minimo=1)}
 
     if nombre == "crm_audiencia_crear":
         audiencia_id = service.crear_audiencia(
@@ -507,15 +578,22 @@ def responder(solicitud: dict, ctx: Contexto) -> dict | None:
                 "id": ident,
                 "result": {"content": contenido, "isError": False},
             }
-        except (auth.ErrorPermiso, ValueError, KeyError) as exc:
-            return {
-                "jsonrpc": "2.0",
-                "id": ident,
-                "result": {
-                    "content": [{"type": "text", "text": f"{type(exc).__name__}: {exc}"}],
-                    "isError": True,
-                },
-            }
+        except auth.ErrorPermiso as exc:
+            # Permiso: el agente no debe reintentar, debe pedirle al abogado.
+            return _error(ident, f"Sin permiso: {exc}")
+        except ErrorArgumento as exc:
+            # Argumento mal formado: el agente SÍ puede corregirse, así que el
+            # mensaje tiene que decirle qué se esperaba, no solo que falló.
+            return _error(ident, f"Argumento inválido: {exc}")
+        except (ValueError, KeyError) as exc:
+            return _error(
+                ident,
+                f"{type(exc).__name__}: {exc}. Revisa los argumentos contra el esquema de la "
+                f"herramienta y reintenta; si el dato no está en el expediente, pregúntale al abogado.",
+            )
+        except Exception as exc:  # noqa: BLE001 — una herramienta nunca debe tumbar el servidor
+            return _error(ident, f"Fallo inesperado en {nombre} ({type(exc).__name__}: {exc}). "
+                                 f"El CRM sigue disponible: corrige los argumentos o avisa al usuario.")
     return {
         "jsonrpc": "2.0",
         "id": ident,
@@ -538,7 +616,18 @@ def servir(entrada=None, salida=None, ctx: Contexto | None = None) -> None:
             salida.write(json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "JSON inválido"}}) + "\n")
             salida.flush()
             continue
-        respuesta = responder(solicitud, ctx)
+        try:
+            respuesta = responder(solicitud, ctx)
+        except Exception as exc:  # noqa: BLE001 — el bucle no puede morir por una herramienta
+            ident = solicitud.get("id") if isinstance(solicitud, dict) else None
+            respuesta = {
+                "jsonrpc": "2.0",
+                "id": ident,
+                "error": {
+                    "code": -32603,
+                    "message": f"fallo interno del CRM: {type(exc).__name__}: {exc}",
+                },
+            }
         if respuesta is not None:
             salida.write(json.dumps(respuesta, ensure_ascii=False) + "\n")
             salida.flush()

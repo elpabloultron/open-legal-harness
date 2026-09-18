@@ -18,7 +18,7 @@ sys.path.insert(0, str(RAIZ / "src"))
 
 from openlegal import auth, service  # noqa: E402
 from openlegal.db import DB  # noqa: E402
-from openlegal.mcp import Contexto, HERRAMIENTAS, responder  # noqa: E402
+from openlegal.mcp import Contexto, HERRAMIENTAS, responder, servir  # noqa: E402
 
 
 class BaseMCP(unittest.TestCase):
@@ -194,7 +194,8 @@ class TestHerramientas(BaseMCP):
         # el agente tiene que poder leer el motivo, no un volcado técnico
         mensaje, error = self.llamar("crm_plazo_listar", causa_id=999)
         self.assertTrue(error)
-        self.assertIn("ErrorPermiso", str(mensaje))
+        self.assertIn("Sin permiso", str(mensaje))
+        self.assertIn("plazo.leer", str(mensaje))
 
 
 class TestServidorRealPorStdio(BaseMCP):
@@ -321,6 +322,71 @@ class TestRectificarPlazo(BaseMCP):
         nombres = {h["name"] for h in HERRAMIENTAS}
         self.assertIn("crm_plazo_actualizar", nombres)
         self.assertIn("crm_plazo_cancelar", nombres)
+
+
+class TestErroresDeArgumento(BaseMCP):
+    """Un argumento malo no puede tumbar el CRM ni dejar al agente a ciegas.
+
+    El agente lee el texto del error: si dice «ValueError: Invalid isoformat
+    string» no aprende nada, y si la excepción se escapa del bucle, el agente se
+    queda sin CRM a mitad de sesión. Las dos cosas están cubiertas aquí.
+    """
+
+    def test_fecha_mal_formada_explica_el_formato(self):
+        datos, error = self.llamar("crm_plazo_calcular", notificacion="ayer", dias=8)
+        self.assertTrue(error)
+        self.assertIn("YYYY-MM-DD", str(datos))
+        self.assertIn("ayer", str(datos))
+
+    def test_dias_no_numericos(self):
+        datos, error = self.llamar("crm_plazo_calcular", notificacion="2026-09-17", dias="ocho")
+        self.assertTrue(error)
+        self.assertIn("entero", str(datos))
+
+    def test_dias_cero_se_rechaza(self):
+        datos, error = self.llamar("crm_plazo_calcular", notificacion="2026-09-17", dias=0)
+        self.assertTrue(error)
+        self.assertIn("mayor o igual a 1", str(datos))
+
+    def test_descripcion_vacia_no_crea_nada(self):
+        datos, error = self.llamar(
+            "crm_plazo_crear", causa_id=self.causa, descripcion="   ", dias=8,
+            notificacion="2026-09-17",
+        )
+        self.assertTrue(error)
+        self.assertIn("descripcion", str(datos))
+        self.assertEqual(self.db.uno("SELECT COUNT(*) AS n FROM plazos")["n"], 0)
+
+    def test_rectificar_sin_motivo_se_rechaza_y_no_cambia_nada(self):
+        creado, _ = self.llamar(
+            "crm_plazo_crear", causa_id=self.causa, descripcion="Contestar demanda",
+            dias=8, notificacion="2026-09-17",
+        )
+        datos, error = self.llamar("crm_plazo_cancelar", plazo_id=creado["plazo_id"])
+        self.assertTrue(error)
+        self.assertIn("motivo", str(datos))
+        fila = self.db.uno("SELECT estado FROM plazos WHERE id = ?", (creado["plazo_id"],))
+        self.assertEqual(fila["estado"], "pendiente")
+
+    def test_el_bucle_sobrevive_a_peticiones_malas(self):
+        import io
+
+        entrada = io.StringIO("\n".join([
+            "esto no es json",
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                        "params": {"name": "crm_no_existe", "arguments": {}}}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                        "params": {"name": "crm_plazo_calcular",
+                                   "arguments": {"notificacion": {"a": 1}, "dias": 8}}}),
+            json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}),
+        ]) + "\n")
+        salida = io.StringIO()
+        servir(entrada, salida, self.ctx)
+
+        respuestas = [json.loads(l) for l in salida.getvalue().strip().splitlines()]
+        self.assertEqual(len(respuestas), 4, "el bucle tiene que contestar las cuatro y seguir vivo")
+        self.assertEqual(respuestas[-1]["id"], 3)
+        self.assertIn("tools", respuestas[-1]["result"])
 
 
 if __name__ == "__main__":
