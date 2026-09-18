@@ -96,9 +96,20 @@ herramienta**.
 
 ## Pasos
 
-1. **Extrae el texto del expediente.** `mcp__open_legal_chile__ocr_extract_pdf` para PDFs
-   escaneados (conserva el formato por fojas) o el lector normal si tiene capa de texto. Si no
-   puedes leerlo, dilo en vez de suponer su contenido.
+1. **Extrae el texto del expediente.** `mcp__open_legal_chile__ocr_extract_pdf` (el parámetro es
+   `pdf_path`) para PDFs escaneados o el lector normal si tiene capa de texto. Si no puedes
+   leerlo, dilo en vez de suponer su contenido.
+   - **Revisa `ok` y `length` de CADA página antes de seguir.** Una página con `ok: false` o
+     `length: 0` no se leyó: pide el documento de nuevo (o una foto mejor) en vez de analizar un
+     expediente incompleto.
+   - **Fotos y escaneos de baja calidad** (boletas notariales, comprobantes, fotos de teléfono):
+     Tesseract rinde 0 caracteres incluso rotando, y devolvía `ok: true` con 0 caracteres en
+     versiones anteriores a la 1.5.6. Con el motor RapidOCR las mismas páginas se leen completas.
+     Instálalo con `pip install "openlegal-chile[ocr]"` (o en el venv del harness:
+     `uv pip install rapidocr-onnxruntime`); el motor lo prefiere solo
+     (`available_engines` debe listarlo). Ortografía de nombres, RUT y montos sale bien de ahí.
+   - Rotar la imagen NO arregla una foto: la búsqueda de inclinación 0/90/180/270 no rescata texto.
+     Si ni con RapidOCR hay texto, el problema es la resolución de la foto, no la orientación.
 2. **Ubica la causa en el CRM.** `mcp__crm__crm_causa_buscar` por carátula, Rol/RIT, tribunal o
    contraparte. Si no existe, créala con `openlegal causa crear` y avisa que lo hiciste. Nunca
    mezcles dos causas parecidas: confirma el Rol/RIT.
