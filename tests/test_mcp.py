@@ -238,7 +238,10 @@ class TestServidorRealPorStdio(BaseMCP):
         proceso = subprocess.Popen(
             [sys.executable, "-m", "openlegal.cli", "mcp"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, cwd=RAIZ, env=entorno,
+            # La codificación se declara: en Windows el valor por defecto es cp1252 y el
+            # servidor imprime UTF-8 (acentos, comillas), así que sin esto el propio
+            # diagnóstico moría con UnicodeDecodeError en vez de mostrar la causa.
+            text=True, encoding="utf-8", errors="replace", cwd=RAIZ, env=entorno,
         )
         try:
             entrada, salida, errores = proceso.stdin, proceso.stdout, proceso.stderr

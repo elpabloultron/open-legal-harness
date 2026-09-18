@@ -419,6 +419,16 @@ def cmd_mcp(args) -> None:
     """Servidor MCP por stdio: es el puente para que el agente escriba en el CRM."""
     from .mcp import main as mcp_main
 
+    # El protocolo MCP va en UTF-8 por definición, y en Windows la salida por defecto de
+    # un proceso es cp1252: sin esto, la primera tilde en una respuesta rompe el flujo
+    # JSON-RPC (o lo corrompe en silencio). Se declara acá, en el punto de entrada, para
+    # que valga en cualquier plataforma y no dependa del entorno que herede.
+    for flujo in (sys.stdout, sys.stderr):
+        try:
+            flujo.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+        except (AttributeError, ValueError):  # pragma: no cover - flujos ya envueltos
+            pass
+
     db = getattr(args, "db", None)
     argv = []
     if db:
