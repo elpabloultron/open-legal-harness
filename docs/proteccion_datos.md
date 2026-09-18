@@ -42,11 +42,11 @@ vive en el disco del estudio. Eso elimina de raíz la mayoría de los riesgos qu
 | **Minimización y finalidad** (art. 14 letras b y c) | El modelo guarda solo lo que sirve a la causa: sin campos de marketing, sin perfiles, sin rastreo | ✅ por diseño |
 | **Medidas de seguridad** (art. 14 quinquies): control de acceso por roles, gestión de contraseñas, registros de acceso y auditoría, respaldos | Roles por causa, scrypt para contraseñas, sesiones con expiración, bitácora `auditoria` de cada acción, token obligatorio del panel | ✅ 25+ pruebas; ver §4 |
 | **Trazabilidad / responsabilidad proactiva** | Cada escritura deja fila en `auditoria` (quién, qué, cuándo), y los accesos denegados también (`permiso.denegado`) | ✅ |
-| **Derechos ARSPOB** (acceso, rectificación, supresión, portabilidad, oposición, bloqueo; art. 11) | La información es local y consultable, lo que hace técnicamente viable responder en 30 días corridos | ⚠️ falta el canal y el procedimiento escrito |
-| **Deber de información** (art. 14 ter, 12 elementos) | — | ❌ pendiente: aviso de privacidad del estudio |
-| **Protocolo de brechas** (art. 14 sexies) | La bitácora permite reconstruir qué se vio y cuándo | ❌ pendiente: procedimiento escrito |
-| **Contratos con encargados** | Aplica el día que el estudio use un proveedor (hosting, respaldo, contabilidad) | ❌ pendiente: plantilla |
-| **Cláusula de datos en contratos de trabajo** (art. 154 bis del Código del Trabajo) | Aplica a quien trate datos de trabajadores | ❌ pendiente: plantilla |
+| **Derechos ARSPOB** (acceso, rectificación, supresión, portabilidad, oposición, bloqueo; art. 11) | La información es local y consultable, lo que hace técnicamente viable responder en 30 días corridos | ✅ canal y procedimiento escrito en [`docs/procedimiento_arspob.md`](procedimiento_arspob.md) (art. 11 verificado); falta la operación de borrado por titular en el CRM, anotada allí §5 |
+| **Deber de información** (art. 14 ter, 12 elementos) | — | ✅ borrador en [`docs/aviso_privacidad_estudio.md`](aviso_privacidad_estudio.md), escrito sobre los doce elementos a) a l) del texto oficial |
+| **Protocolo de brechas** (art. 14 sexies) | La bitácora permite reconstruir qué se vio y cuándo | ✅ procedimiento escrito en [`docs/protocolo_brechas.md`](protocolo_brechas.md), con el registro de los cinco elementos que la ley pide |
+| **Contratos con encargados** | Aplica el día que el estudio use un proveedor (hosting, respaldo, contabilidad) | ✅ plantilla en [`templates/contrato_encargado.md`](../templates/contrato_encargado.md), con las cláusulas tipo de la Res. Ex. 2025-3748 para la transferencia |
+| **Cláusula de datos en contratos de trabajo** (**art. 154 ter** del Código del Trabajo — no el 154 bis, que es hoy el protocolo de acoso: verificado en el texto oficial) | Aplica a quien trate datos de trabajadores | ✅ plantilla en [`templates/clausula_datos_contrato_trabajo.md`](../templates/clausula_datos_contrato_trabajo.md) |
 
 ## 3. El punto crítico: la IA y la salida de datos
 
@@ -91,7 +91,14 @@ Pendiente antes de datos reales de un cliente:
   expediente terminado (art. 14 letra d y derecho de supresión).
 - **Segundo factor** para el rol administrador y socio.
 - **Hashes de integridad** de documentos, para poder acreditar que un escrito no cambió.
-- Canal y procedimiento ARSPOB, aviso de privacidad y protocolo de brechas (§2).
+- **Operación de borrado y anonimización por titular** en el CRM, con prueba automatizada: es lo que
+  hace ejecutable el derecho de supresión, hoy resuelto a mano (§5 del procedimiento ARSPOB).
+- **Exportación de portabilidad** (JSON o CSV) de todo lo que el sistema tenga de un titular.
+
+Ya escritos y enlazados en §2: el aviso de privacidad, el procedimiento ARSPOB, el protocolo de
+brechas, el contrato de encargado y la cláusula para contratos de trabajo. Los cinco se redactaron
+sobre los textos oficiales traídos de la BCN (Ley 21.719 versión 05-02-2026 y Código del Trabajo),
+cotejando artículo por artículo —de ahí salió la corrección del 154 bis al 154 ter—.
 
 ## 5. Sanciones, para dimensionar
 
