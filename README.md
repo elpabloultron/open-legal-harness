@@ -261,6 +261,36 @@ openlegal --db "$DB" usuario clave --email admin@estudio.cl
 openlegal --db "$DB" usuario desactivar --email luis@estudio.cl   # corta el acceso sin borrar historial
 ```
 
+## Avisos por correo y SMS
+
+El CRM avisa sin quedarse esperando a nadie: los avisos **se encolan** en la base del
+estudio y salen después, así un servidor de correo caído no deja el panel colgado ni pierde
+el aviso.
+
+| Aviso | Cuándo sale |
+|---|---|
+| **Asignación** | En el momento en que a alguien le asignan un plazo o una audiencia |
+| **Recordatorio** | Todos los días, mientras el plazo siga pendiente y esté dentro de la ventana de días (3 por defecto) |
+
+Un aviso no se repite el mismo día (cada uno lleva su huella, única en la base) y uno que
+falla se reintenta con su error a la vista en vez de perderse.
+
+```bash
+openlegal notificar --config                      # qué canal está listo y cuál falta (sin mostrar claves)
+openlegal notificar --generar --enviar            # lo que conviene correr cada 10 minutos
+openlegal notificar --estado                      # pendientes, enviados, fallidos y por qué
+openlegal usuario editar --email ana@estudio.cl --telefono +56912345678   # para el SMS
+```
+
+Correo por SMTP (con STARTTLS) y SMS por Twilio, por un webhook propio o en modo de prueba
+sin salir a la red. Las credenciales van en `~/.openlegal/notificaciones.json` con permisos
+600 — **nunca** en el chat ni en el repositorio. Configuración, pruebas y detalles en
+[docs/notificaciones.md](docs/notificaciones.md); el circuito completo se puede probar de
+punta a punta con `python3 scripts/e2e_avisos.py` (levanta un servidor de correo de prueba).
+
+**No le avisa al cliente**: los avisos son internos del estudio. Comunicarle a un cliente que
+su plazo vence es un acto profesional responsable, y no se automatiza por accidente.
+
 ## Demostración local (SQLite, sin Docker)
 
 ```bash

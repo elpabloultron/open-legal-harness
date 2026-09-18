@@ -8,7 +8,7 @@ import datetime as dt
 import hashlib
 import pathlib
 
-from . import auth, ia, plazos
+from . import auth, ia, notificaciones, plazos
 from .db import DB
 
 
@@ -131,6 +131,12 @@ def crear_plazo(
         db, usuario["estudio_id"], usuario["id"], "plazo.crear", "plazos", plazo_id,
         f"{descripcion} vence={fecha_vencimiento}",
     )
+    notificaciones.avisar_asignacion(
+        db, usuario, "plazo", plazo_id, descripcion,
+        causa_id=causa_id, responsable_id=responsable_id or usuario["id"],
+        cuando=f"Vence el {fecha_vencimiento}" if fecha_vencimiento else None,
+        plazo_id=plazo_id,
+    )
     return {"id": plazo_id, "fecha_vencimiento": fecha_vencimiento, "calculo": calculo}
 
 
@@ -250,9 +256,15 @@ def crear_audiencia(
             "modalidad": extra.get("modalidad", "presencial"),
             "lugar_o_url": extra.get("lugar_o_url"),
             "minuta": extra.get("minuta"),
+            "responsable_id": extra.get("responsable_id"),
         },
     )
     auth.auditar(db, usuario["estudio_id"], usuario["id"], "audiencia.crear", "audiencias", audiencia_id)
+    notificaciones.avisar_asignacion(
+        db, usuario, "audiencia", audiencia_id, f"{tipo} del {fecha}",
+        causa_id=causa_id, responsable_id=extra.get("responsable_id"),
+        cuando=f"{fecha} {hora or ''}".strip(), audiencia_id=audiencia_id,
+    )
     return audiencia_id
 
 

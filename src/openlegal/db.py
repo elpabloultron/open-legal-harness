@@ -298,9 +298,57 @@ def _migracion_4_retencion(db: DB) -> list[str]:
     return ["CREATE retencion_politica"]
 
 
+def _migracion_5_notificaciones(db: DB) -> list[str]:
+    """Migración 5: la cola de avisos (correo y SMS) y el teléfono de cada usuario.
+
+    Los avisos NO se mandan en el momento en que se crea un plazo: se encolan. Así el CRM
+    nunca se queda esperando a un servidor de correo, un aviso que falla se puede
+    reintentar sin perderlo, y queda registro de qué se avisó, a quién, cuándo y por qué
+    canal — que es lo que después permite decir «sí, se le avisó el día 12».
+
+    La columna `clave` es la que evita mandar el mismo recordatorio dos veces: es única, y
+    el envío la usa como huella (por ejemplo `plazo:12:email:2026-09-20`).
+    """
+    aplicadas = []
+    for tabla, columna, definicion in (
+        ("usuarios", "telefono", "TEXT"),
+        # Para avisar de una audiencia hay que saber de quién es: si no, el aviso va a
+        # todos los abogados del estudio y el ruido termina tapando lo importante.
+        ("audiencias", "responsable_id", "INTEGER REFERENCES usuarios(id)"),
+    ):
+        if tabla in db.tablas() and columna not in db.columnas(tabla):
+            db.ejecutar(f"ALTER TABLE {tabla} ADD COLUMN {columna} {definicion}")
+            aplicadas.append(f"ALTER {tabla}.{columna}")
+    db.ejecutar(
+        "CREATE TABLE IF NOT EXISTS notificaciones ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " estudio_id INTEGER NOT NULL REFERENCES estudios(id) ON DELETE CASCADE,"
+        " usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,"
+        " causa_id INTEGER REFERENCES causas(id) ON DELETE SET NULL,"
+        " plazo_id INTEGER REFERENCES plazos(id) ON DELETE SET NULL,"
+        " audiencia_id INTEGER REFERENCES audiencias(id) ON DELETE SET NULL,"
+        " canal TEXT NOT NULL,"
+        " destino TEXT NOT NULL,"
+        " asunto TEXT,"
+        " cuerpo TEXT NOT NULL,"
+        " prioridad TEXT NOT NULL DEFAULT 'normal',"
+        " programada_para TEXT,"
+        " estado TEXT NOT NULL DEFAULT 'pendiente',"
+        " intentos INTEGER NOT NULL DEFAULT 0,"
+        " ultimo_error TEXT,"
+        " creada_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        " enviada_en TEXT,"
+        " clave TEXT UNIQUE)"
+    )
+    db.ejecutar("CREATE INDEX IF NOT EXISTS idx_notificaciones_cola ON notificaciones (estado, programada_para)")
+    aplicadas.append("CREATE notificaciones")
+    return aplicadas
+
+
 MIGRACIONES: list[tuple[int, str, Callable[[DB], list[str]]]] = [
     (1, "esquema_base", _migracion_1_esquema_base),
     (2, "documentos_integridad", _migracion_2_documentos_integridad),
     (3, "segundo_factor", _migracion_3_segundo_factor),
     (4, "retencion", _migracion_4_retencion),
+    (5, "notificaciones", _migracion_5_notificaciones),
 ]

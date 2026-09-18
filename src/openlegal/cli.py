@@ -24,7 +24,7 @@ import pathlib
 import sys
 from typing import NoReturn
 
-from . import auth, ia, plazos, retencion, seguridad, service, titulares
+from . import auth, ia, notificaciones, plazos, retencion, seguridad, service, titulares
 from .db import DB, MIGRACIONES
 
 
@@ -116,13 +116,29 @@ def cmd_usuario_crear(args) -> None:
     print(f"usuario {usuario_id} creado: {args.nombre} <{args.email}> rol={args.rol}")
 
 
+def cmd_usuario_editar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    actor = _usuario_actual(db, estudio_id, args.actor)
+    activo = None
+    if args.activo is not None:
+        activo = args.activo.lower() in ("si", "sí", "1", "true", "verdadero")
+    fila = auth.actualizar_usuario(
+        db, actor, args.email, telefono=args.telefono, activo=activo, rol=args.rol,
+    )
+    print(f"usuario {fila['id']} actualizado: {fila['nombre']} <{fila['email']}> "
+          f"rol={fila['rol']} activo={'sí' if fila['activo'] else 'no'} "
+          f"teléfono={fila['telefono'] or '(sin cargar)'}")
+
+
 def cmd_usuario_listar(args) -> None:
     db = _ctx(args)
     estudio_id = _estudio_actual(db, args.estudio)
     _imprimir(
         "usuarios del estudio",
         db.todos(
-            "SELECT id, nombre, email, rol, activo FROM usuarios WHERE estudio_id = ? ORDER BY id",
+            f"SELECT id, nombre, email, rol, {'telefono, ' if 'telefono' in db.columnas('usuarios') else ''}"
+            "activo FROM usuarios WHERE estudio_id = ? ORDER BY id",
             (estudio_id,),
         ),
     )
@@ -373,6 +389,7 @@ def cmd_usuario_clave(args) -> None:
     """Fija la contraseña de un usuario. Se pide dos veces y nunca se escribe en la línea de comandos."""
     db = _ctx(args)
     estudio_id = _estudio_actual(db, args.estudio)
+    actor = _usuario_actual(db, estudio_id, getattr(args, "actor", None))
     usuario = db.uno(
         "SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (estudio_id, args.email.lower())
     )
@@ -384,24 +401,28 @@ def cmd_usuario_clave(args) -> None:
         salida_error("las contrasenas no coinciden")
     if len(primera) < 10:
         salida_error("usa al menos 10 caracteres (los datos son de clientes)")
-    db.ejecutar("UPDATE usuarios SET password_hash = ? WHERE id = ?", (auth.hash_password(primera), usuario["id"]))
-    auth.auditar(db, estudio_id, usuario["id"], "usuario.clave", "usuarios", usuario["id"])
-    print(f"contrasena actualizada para {args.email} ({usuario['rol']})")
+    fila = auth.actualizar_usuario(db, actor, args.email, password=primera)
+    _cerrar_sesiones(db, fila["id"])
+    print(f"contrasena actualizada para {fila['email']} ({fila['rol']})")
 
 
 def cmd_usuario_desactivar(args) -> None:
-    """Corta el acceso sin borrar el historial: la causa sigue mostrando quién la llevaba."""
+    """Corta el acceso sin borrar el historial: la causa sigue mostrando quién la llevaba.
+
+    Pasa por `auth.actualizar_usuario`, que exige el permiso y no deja al estudio sin su
+    último socio activo — y anota en la bitácora **quién** revocó el acceso, no el revocado.
+    """
     db = _ctx(args)
     estudio_id = _estudio_actual(db, args.estudio)
-    usuario = db.uno(
-        "SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (estudio_id, args.email.lower())
-    )
-    if not usuario:
-        salida_error(f"no existe el usuario {args.email} en el estudio {estudio_id}")
-    db.ejecutar("UPDATE usuarios SET activo = 0 WHERE id = ?", (usuario["id"],))
-    db.ejecutar("DELETE FROM sesiones WHERE usuario_id = ?", (usuario["id"],))
-    auth.auditar(db, estudio_id, usuario["id"], "usuario.desactivar", "usuarios", usuario["id"])
-    print(f"acceso revocado a {args.email}")
+    actor = _usuario_actual(db, estudio_id, getattr(args, "actor", None))
+    fila = auth.actualizar_usuario(db, actor, args.email, activo=False)
+    _cerrar_sesiones(db, fila["id"])
+    print(f"acceso revocado a {fila['email']} (el historial queda intacto)")
+
+
+def _cerrar_sesiones(db: DB, usuario_id: int) -> None:
+    """Cierra las sesiones abiertas de un usuario: al revocar o cambiar la clave, ya no sirven."""
+    db.ejecutar("DELETE FROM sesiones WHERE usuario_id = ?", (usuario_id,))
 
 
 def cmd_audiencia_crear(args) -> None:
@@ -621,6 +642,49 @@ def cmd_retencion(args) -> None:
     db.cerrar()
 
 
+def cmd_notificar(args) -> None:
+    db = _ctx(args)
+
+    if args.config:
+        existe = notificaciones.ruta_config().is_file()
+        print(f"archivo de configuración: {notificaciones.ruta_config()} {'(existe)' if existe else '(no existe todavía)'}")
+        print("(las claves nunca se muestran)")
+        for fila in notificaciones.resumen_config():
+            marca = "listo " if fila["listo"] else "FALTA "
+            print(f"  {fila['canal']:20s} {marca} {fila['detalle']}")
+        if not existe:
+            print("\npara configurarlo: crea ese archivo con permisos 600 — ver docs/notificaciones.md")
+        db.cerrar()
+        return
+
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+
+    if args.generar or not (args.enviar or args.estado):
+        informe = notificaciones.generar_recordatorios(db, usuario, dias=args.dias)
+        print(
+            f"revisé {informe['plazos_revisados']} plazo(s) y {informe['audiencias_revisadas']} audiencia(s) "
+            f"con {informe['dias_de_aviso']} día(s) de anticipación"
+        )
+        print(f"  encolados: {informe['encoladas']} · ya estaban encolados: {informe['repetidas']} · sin destino: {informe['sin_destino']}")
+        if informe["sin_destino"]:
+            print("  (sin destino = la persona no tiene correo/teléfono cargado, o el canal no está configurado)")
+
+    if args.enviar:
+        resultado = notificaciones.enviar_pendientes(db, usuario, limite=args.limite)
+        print(f"\ncola: {resultado['revisadas']} revisado(s) · enviadas: {resultado['enviadas']} · fallidas: {resultado['fallidas']}")
+        for error in resultado["errores"]:
+            print(f"  falló el aviso {error['id']} por {error['canal']}: {error['error']}")
+
+    if args.estado:
+        datos = notificaciones.estado(db)
+        print(f"\ncola de avisos: {datos['conteos'] or '(vacía)'}")
+        for falla in datos["ultimas_fallas"]:
+            print(f"  falló {falla['canal']} a {falla['destino']}: {falla['ultimo_error']}")
+
+    db.cerrar()
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="openlegal", description="Harness legal chileno con CRM")
     parser.add_argument("--db", help="URL de la base: sqlite:///ruta.db o postgresql://...")
@@ -651,15 +715,25 @@ def construir_parser() -> argparse.ArgumentParser:
     pu.add_argument("--sin-password", action="store_true")
     pu.add_argument("--estudio", type=int)
     pu.set_defaults(func=cmd_usuario_crear)
+    pu = sub_u.add_parser("editar", help="teléfono, rol, contraseña o dejar a alguien inactivo")
+    pu.add_argument("--email", required=True, help="a quién se le cambian los datos")
+    pu.add_argument("--telefono", help="teléfono para los avisos por SMS")
+    pu.add_argument("--rol", choices=list(auth.ROLES))
+    pu.add_argument("--activo", help="si o no: si el usuario puede entrar al CRM")
+    pu.add_argument("--actor", help="email de quien hace el cambio (por defecto, el socio)")
+    pu.add_argument("--estudio", type=int)
+    pu.set_defaults(func=cmd_usuario_editar)
     pu = sub_u.add_parser("listar")
     pu.add_argument("--estudio", type=int)
     pu.set_defaults(func=cmd_usuario_listar)
     pu = sub_u.add_parser("clave", help="fija la contrasena de un usuario (se pide por teclado)")
     pu.add_argument("--email", required=True)
+    pu.add_argument("--actor", help="email de quien hace el cambio (por defecto, el socio)")
     pu.add_argument("--estudio", type=int)
     pu.set_defaults(func=cmd_usuario_clave)
     pu = sub_u.add_parser("desactivar", help="revoca el acceso de un usuario")
     pu.add_argument("--email", required=True)
+    pu.add_argument("--actor", help="email de quien revoca el acceso (por defecto, el socio)")
     pu.add_argument("--estudio", type=int)
     pu.set_defaults(func=cmd_usuario_desactivar)
     pu = sub_u.add_parser("2fa", help="segundo factor (TOTP) de un usuario: enrolar, apagar o ver estado")
@@ -676,6 +750,17 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--usuario", help="email del usuario que ejecuta")
     p.add_argument("--estudio", type=int)
     p.set_defaults(func=cmd_seguridad)
+
+    p = sub.add_parser("notificar", help="avisos por correo y SMS: encola recordatorios y despacha la cola")
+    p.add_argument("--generar", action="store_true", help="encola recordatorios de plazos y audiencias (es lo que hace por defecto)")
+    p.add_argument("--enviar", action="store_true", help="manda lo que está en la cola")
+    p.add_argument("--estado", action="store_true", help="cuántos avisos hay en cada estado y las últimas fallas")
+    p.add_argument("--config", action="store_true", help="qué está configurado y qué falta (sin mostrar claves)")
+    p.add_argument("--dias", type=int, help="con cuántos días de anticipación avisar (por defecto 3)")
+    p.add_argument("--limite", type=int, default=50, help="cuántos avisos despachar en esta corrida")
+    p.add_argument("--usuario", help="email del usuario que ejecuta")
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_notificar)
 
     p = sub.add_parser("retencion", help="cuánto se conserva cada dato y qué plazo está cumplido")
     p.add_argument("--definir", choices=["datos_de_persona", "documentos"], help="tipo cuyo plazo se declara")
@@ -865,8 +950,20 @@ def construir_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entrada del comando. Los errores del dominio se muestran como frase, no como volcado.
+
+    Un abogado que intenta algo que el sistema no permite (desactivar al último socio,
+    tocar una causa ajena, un plazo mal formado) tiene que leer **por qué**, no un
+    `Traceback`. Los errores que sí son fallas del programa —un `IntegrityError` de la
+    base, un `TypeError`— siguen mostrándose completos: esos hay que arreglarlos.
+    """
     args = construir_parser().parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except PermissionError as exc:
+        salida_error(str(exc))
+    except ValueError as exc:
+        salida_error(str(exc))
     return 0
 
 

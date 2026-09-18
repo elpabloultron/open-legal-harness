@@ -30,7 +30,7 @@ PERMISOS: dict[str, set[str]] = {
         "documento.publicar", "honorario.leer", "honorario.editar", "gasto.leer",
         "gasto.editar", "usuario.gestionar", "auditoria.leer", "reporte.panel",
         "honorario.leer.todos", "ia.autorizar", "ia.enviar", "ia.leer",
-        "titular.gestionar",
+        "titular.gestionar", "aviso.gestionar",
     },
     # Administrador del sistema: gestiona usuarios y ve todo el estudio para
     # operar el CRM (agenda, plazos, clientes), pero no toca la redacción ni las
@@ -45,18 +45,19 @@ PERMISOS: dict[str, set[str]] = {
         "plazo.leer", "plazo.crear", "plazo.cerrar", "plazo.editar", "audiencia.leer", "audiencia.crear",
         "audiencia.editar", "documento.leer", "documento.crear", "documento.publicar", "gasto.leer",
         "honorario.leer", "reporte.panel", "ia.autorizar", "ia.enviar", "ia.leer",
-        "titular.gestionar",
+        "titular.gestionar", "aviso.gestionar",
     },
     "paralegal": {
         "causa.leer", "cliente.leer", "plazo.leer", "plazo.crear", "plazo.editar", "audiencia.leer",
         "audiencia.crear", "audiencia.editar", "documento.leer", "documento.crear", "gasto.leer",
+        "aviso.gestionar",
     },
     "administrativo": {
         # Ve todas las causas del estudio para poder facturar, pero sin documentos
         # ni redaccion: el acceso sustantivo sigue siendo por asignacion.
         "causa.leer", "causa.leer.todas", "cliente.leer", "cliente.editar", "plazo.leer",
         "audiencia.leer", "audiencia.crear", "audiencia.editar", "honorario.leer", "honorario.editar", "gasto.leer",
-        "gasto.editar", "reporte.panel",
+        "gasto.editar", "reporte.panel", "aviso.gestionar",
     },
     # El cliente solo ve su causa, su estado, sus audiencias y lo publicado.
     "cliente": {"causa.leer.propia", "plazo.leer", "audiencia.leer", "documento.leer.cliente"},
@@ -127,6 +128,72 @@ def crear_usuario(
     # `actor_id` es quien ejecuta la accion (None cuando lo hace el sistema).
     auditar(db, estudio_id, actor_id, "usuario.crear", "usuarios", usuario_id, f"rol={rol} email={email.lower()}")
     return usuario_id
+
+
+def actualizar_usuario(
+    db: DB,
+    actor: dict,
+    email: str,
+    *,
+    telefono: str | None = None,
+    activo: bool | None = None,
+    rol: str | None = None,
+    password: str | None = None,
+) -> dict:
+    """Cambia datos de un usuario del estudio: teléfono, rol, contraseña o si está activo.
+
+    Los datos del personal son datos personales igual que los del cliente: cada cambio va a
+    la bitácora con quién lo hizo. Dos cosas no se permiten, porque dejarían al estudio sin
+    quien pueda administrarlo: cambiarle el rol al **último socio activo** y desactivarlo.
+    """
+    exigir(db, actor, "usuario.gestionar")
+    usuario = db.uno(
+        "SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (actor["estudio_id"], email.lower())
+    )
+    if not usuario:
+        raise ValueError(f"no existe el usuario {email} en el estudio")
+
+    if rol is not None and rol not in ROLES:
+        raise ValueError(f"rol invalido: {rol} (validos: {', '.join(ROLES)})")
+    pierde_socio = (rol is not None and rol != "socio") or activo is False
+    if usuario["rol"] == "socio" and pierde_socio:
+        socios = db.todos(
+            "SELECT id FROM usuarios WHERE estudio_id = ? AND rol = 'socio' AND activo = 1",
+            (actor["estudio_id"],),
+        )
+        if len(socios) <= 1:
+            raise ValueError(
+                "no se puede: es el último socio activo del estudio y nadie quedaría con "
+                "usuarios.gestionar. Crea otro socio primero."
+            )
+
+    cambios: dict = {}
+    if telefono is not None:
+        cambios["telefono"] = telefono
+    if activo is not None:
+        cambios["activo"] = 1 if activo else 0
+    if rol is not None:
+        cambios["rol"] = rol
+    if password is not None:
+        cambios["password_hash"] = hash_password(password)
+    if not cambios:
+        raise ValueError("no hay nada que cambiar: indica teléfono, rol, activo o contraseña")
+
+    asignaciones = ", ".join(f"{campo} = ?" for campo in cambios)
+    db.ejecutar(
+        f"UPDATE usuarios SET {asignaciones} WHERE id = ?", (*cambios.values(), usuario["id"])
+    )
+    resumen = ", ".join(
+        campo if campo != "password_hash" else "contraseña" for campo in cambios
+    )
+    auditar(
+        db, actor["estudio_id"], actor["id"], "usuario.actualizar", "usuarios", usuario["id"],
+        f"{email.lower()}: {resumen}",
+    )
+    fila = db.uno("SELECT * FROM usuarios WHERE id = ?", (usuario["id"],))
+    assert fila is not None
+    fila.pop("password_hash", None)
+    return fila
 
 
 def autenticar(db: DB, email: str, password: str, codigo: str | None = None) -> dict | None:
