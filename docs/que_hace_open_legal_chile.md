@@ -19,7 +19,11 @@ para juzgar un contrato de 2021 con la ley de 2021.
 **2. Criterios de la Administración y jurisprudencia.**
 Conectores a diez instituciones: BCN, Contraloría (dictámenes, instructivos, auditorías), Dirección
 del Trabajo, SII, CMF, TDLC, Poder Judicial, Superintendencia del Medio Ambiente, CNE y Panel de
-Expertos. Cada uno con su caché local y su política de avisos.
+Expertos. Del SII se cubren, además de circulares y resoluciones exentas, la jurisprudencia
+administrativa (oficios, con su cita normativa), los actos de las direcciones regionales, los
+convenios tributarios internacionales y la jurisprudencia judicial —3.613 sentencias de 2008 a 2026,
+con tribunal, partes, RUC, decisión y artículos citados—. Cada conector tiene caché local y política
+de avisos.
 
 **3. Un grafo de conocimiento jurídico.**
 967 nodos (572 artículos, 205 jurisprudencias, 105 instituciones, 57 obras doctrinales, 15 autores,
@@ -55,18 +59,23 @@ para oficina).
 - **El buscador de la BCN no es de texto libre**: el portal sólo publica consultas por `idNorma` o
   número de ley, así que resuelve números de ley y nombres de códigos. Cuando no cubre un término,
   lo dice explícitamente en vez de devolver una lista vacía.
-- **Depende de portales públicos.** Cuando una institución reordena su sitio, la fuente se cae. Dos
-  índices del SII (resoluciones exentas y oficios) están hoy con dirección 404 y el conector lo
-  informa como aviso: una fuente caída no es lo mismo que la inexistencia de documentos.
+- **Depende de portales públicos.** Cuando una institución reordena su sitio, la fuente se cae. Pasó
+  con dos índices del SII (resoluciones exentas y jurisprudencia administrativa), que estuvieron
+  meses con dirección 404 sin que nadie se enterara: hoy están reconectados. Lo que sigue pendiente
+  es la **consulta pública de proyectos normativos**, una aplicación JavaScript que sólo puede
+  descifrarse observando su tráfico en un navegador. En todos los casos el conector **avisa** en vez
+  de devolver vacío: una fuente caída no es lo mismo que la inexistencia de documentos.
 - **Nada sale de tu máquina.** Todo corre local, que es lo que permite trabajar con expedientes con
   datos personales.
 
 ## Estado de calidad (18-09-2026)
 
-- Versión **1.5.9** publicada en PyPI.
-- **188 pruebas** automatizadas, verdes en dos entornos distintos y en el CI (Ubuntu y Windows,
+- Versión **1.5.11** publicada en PyPI.
+- **197 pruebas** automatizadas, verdes en dos entornos distintos y en el CI (Ubuntu y Windows,
   Python 3.10 a 3.14).
-- Auditoría estática (bandit) sin hallazgos.
-- Los últimos tres parches (1.5.6 a 1.5.9) nacieron de usar el sistema en un caso real: una página
+- Auditoría estática en verde en sus seis frentes: dependencias (pip-audit), seguridad (bandit),
+  análisis semántico (semgrep), fuga de secretos (detect-secrets), tipado estricto (mypy) y estilo
+  (ruff).
+- Los últimos seis parches (1.5.6 a 1.5.11) nacieron de usar el sistema en un caso real: una página
   que no se leía y se informaba como «éxito», un contador que medía el mensaje de error en lugar del
   documento, un buscador que no buscaba y tres conectores que devolvían vacío.
