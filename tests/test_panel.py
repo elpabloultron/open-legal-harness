@@ -25,8 +25,9 @@ from openlegal.db import DB  # noqa: E402
 # de la interfaz (así corre en CI, en las ocho combinaciones de sistema y Python). Si falta
 # FastAPI, estas pruebas se saltean en vez de romper la suite del núcleo.
 try:
-    from openlegal.web import crear_app
     from starlette.testclient import TestClient
+
+    from openlegal.web import crear_app
 except ImportError:  # pragma: no cover - depende del entorno
     crear_app = None            # type: ignore[assignment]
     TestClient = None           # type: ignore[assignment]
