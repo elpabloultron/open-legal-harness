@@ -99,6 +99,51 @@ def cargar_config() -> dict:
     return config
 
 
+def guardar_config(cambios: dict) -> dict:
+    """Guarda la configuración de avisos y devuelve cómo quedó.
+
+    Se **mezcla** con lo que ya había: el panel manda sólo las secciones que se tocaron, así
+    cambiar el correo no borra el SMS. Un valor vacío o `None` significa «no lo cambies» —el
+    formulario no devuelve la clave cuando no se escribió— y nada de esto se escribe en la
+    bitácora: son credenciales, no datos de la causa.
+
+    El archivo se escribe con permisos 600 y de forma atómica (se arma aparte y se reemplaza),
+    para que nadie pueda leerlo ni quede a medio escribir si algo falla en el medio.
+    """
+    if not isinstance(cambios, dict):
+        raise ValueError("la configuración tiene que ser un objeto")
+    archivo = ruta_config()
+    actual: dict = {}
+    if archivo.is_file():
+        try:
+            guardado = json.loads(archivo.read_text(encoding="utf-8"))
+            if isinstance(guardado, dict):
+                actual = guardado
+        except json.JSONDecodeError:
+            # Un archivo ilegible no se pisa en silencio: se avisa y no se toca nada.
+            raise ValueError(f"{archivo} no es JSON válido: corrígelo antes de guardar desde el panel") from None
+
+    for seccion, valor in cambios.items():
+        if isinstance(valor, dict) and isinstance(actual.get(seccion), dict):
+            for clave, dato in valor.items():
+                if dato is None or (isinstance(dato, str) and not dato.strip()):
+                    continue          # vacío = no lo cambies (no es lo mismo que borrar)
+                actual[seccion][clave] = int(dato) if clave == "puerto" and str(dato).isdigit() else dato
+        elif valor is not None:
+            actual[seccion] = valor
+
+    archivo.parent.mkdir(parents=True, exist_ok=True)
+    if not archivo.parent.exists():          # pragma: no cover - mkdir ya lo garantiza
+        raise ValueError(f"no pude crear {archivo.parent}")
+    temporal = archivo.with_name(archivo.name + ".nuevo")
+    descriptor = os.open(temporal, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as salida:
+        salida.write(json.dumps(actual, indent=2, ensure_ascii=False) + "\n")
+    os.replace(temporal, archivo)
+    os.chmod(archivo, 0o600)
+    return actual
+
+
 def resumen_config(config: dict | None = None) -> list[dict]:
     """Qué está configurado y qué falta, canal por canal. Nunca incluye la clave."""
     config = config or cargar_config()
@@ -317,6 +362,46 @@ def _enviar_consola(config: dict, destino: str, asunto: str | None, cuerpo: str)
         salida.write(f"{cuerpo}\n")
 
 
+def _despachar_fila(db: DB, fila: dict, config: dict) -> str | None:
+    """Manda un aviso y deja el resultado. Devuelve el error si falló, o None si salió.
+
+    Está aparte del recorrido de la cola porque el panel manda **un** aviso de prueba: se
+    quiere probar el canal, no vaciar la cola del estudio.
+    """
+    canal = fila["canal"]
+    try:
+        if canal == "email":
+            _enviar_correo(config, fila["destino"], fila["asunto"], fila["cuerpo"])
+        elif canal == "sms":
+            _enviar_sms(config, fila["destino"], fila["cuerpo"])
+        else:
+            _enviar_consola(config, fila["destino"], fila["asunto"], fila["cuerpo"])
+    except Exception as exc:  # noqa: BLE001 - cualquier fallo del transporte se registra, no tumba la corrida
+        intentos = int(fila["intentos"] or 0) + 1
+        nuevo_estado = "fallida" if intentos >= MAX_INTENTOS else "pendiente"
+        db.ejecutar(
+            "UPDATE notificaciones SET intentos = ?, estado = ?, ultimo_error = ? WHERE id = ?",
+            (intentos, nuevo_estado, f"{type(exc).__name__}: {str(exc)[:200]}", fila["id"]),
+        )
+        return f"{type(exc).__name__}: {exc}"
+    db.ejecutar(
+        "UPDATE notificaciones SET estado = 'enviada', enviada_en = ?, intentos = intentos + 1, ultimo_error = NULL "
+        "WHERE id = ?",
+        (dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), fila["id"]),
+    )
+    return None
+
+
+def enviar_aviso(db: DB, usuario: dict, aviso_id: int, config: dict | None = None) -> dict:
+    """Manda un aviso puntual de la cola (lo usa el botón de prueba del panel)."""
+    auth.exigir(db, usuario, PERMISO)
+    fila = db.uno("SELECT * FROM notificaciones WHERE id = ?", (aviso_id,))
+    if not fila:
+        raise ValueError(f"no existe el aviso {aviso_id}")
+    error = _despachar_fila(db, fila, config if config is not None else cargar_config())
+    return {"id": aviso_id, "enviado": error is None, "error": error}
+
+
 def enviar_pendientes(db: DB, usuario: dict, limite: int = 50, config: dict | None = None) -> dict:
     """Saca la cola: manda lo pendiente y deja el resultado de cada intento.
 
@@ -329,30 +414,12 @@ def enviar_pendientes(db: DB, usuario: dict, limite: int = 50, config: dict | No
     filas = pendientes(db, limite)
     enviadas, fallidas, errores = 0, 0, []
     for fila in filas:
-        canal = fila["canal"]
-        try:
-            if canal == "email":
-                _enviar_correo(config, fila["destino"], fila["asunto"], fila["cuerpo"])
-            elif canal == "sms":
-                _enviar_sms(config, fila["destino"], fila["cuerpo"])
-            else:
-                _enviar_consola(config, fila["destino"], fila["asunto"], fila["cuerpo"])
-        except Exception as exc:  # noqa: BLE001 - cualquier fallo del transporte se registra, no tumba la corrida
-            intentos = int(fila["intentos"] or 0) + 1
-            nuevo_estado = "fallida" if intentos >= MAX_INTENTOS else "pendiente"
-            db.ejecutar(
-                "UPDATE notificaciones SET intentos = ?, estado = ?, ultimo_error = ? WHERE id = ?",
-                (intentos, nuevo_estado, f"{type(exc).__name__}: {str(exc)[:200]}", fila["id"]),
-            )
+        error = _despachar_fila(db, fila, config)
+        if error:
             fallidas += 1
-            errores.append({"id": fila["id"], "canal": canal, "error": str(exc)[:120]})
-            continue
-        db.ejecutar(
-            "UPDATE notificaciones SET estado = 'enviada', enviada_en = ?, intentos = intentos + 1, ultimo_error = NULL "
-            "WHERE id = ?",
-            (dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), fila["id"]),
-        )
-        enviadas += 1
+            errores.append({"id": fila["id"], "canal": fila["canal"], "error": error[:120]})
+        else:
+            enviadas += 1
     if filas:
         auth.auditar(
             db, usuario["estudio_id"], usuario["id"], "notificacion.despachar", "notificaciones", None,

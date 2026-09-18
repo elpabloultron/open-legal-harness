@@ -18,15 +18,32 @@ Endpoints:
   GET  /                     panel HTML (token o sesión)
   POST /api/login            entra con correo y contraseña
   POST /api/logout           cierra la sesión
-  GET  /api/sesion           quién soy y en qué estudio
+  GET  /api/sesion           quién soy, en qué estudio y qué módulos me tocan
   GET  /api/estado           estudio, usuario y conteos
-  GET  /api/causas           causas visibles para el usuario
-  GET  /api/plazos?dias=N    próximos vencimientos
-  GET  /api/agenda?dias=N    audiencias próximas
+  GET  /api/causas           causas visibles para el usuario       POST /api/causas
+  GET  /api/plazos?dias=N    próximos vencimientos                 POST /api/plazos
+  POST /api/plazos/{id}/cumplido
+  GET  /api/agenda?dias=N    audiencias próximas                   POST /api/audiencias
+  GET  /api/clientes?q=      clientes y búsqueda                   POST /api/clientes
   GET  /api/panel            KPIs del estudio
   GET  /api/calculo?notificacion=YYYY-MM-DD&dias=N   cómputo Art. 66 CPC
-  POST /api/plazos           crear plazo (calcula vencimiento)
-  POST /api/plazos/{id}/cumplido
+
+Módulos (lo mismo que la terminal, sin terminal):
+
+  Avisos     GET  /api/avisos          GET /api/avisos (canales, cola, estado)
+             POST /api/avisos/config   guarda correo y SMS (las claves nunca vuelven)
+             POST /api/avisos/probar   manda un aviso de prueba al propio usuario
+             POST /api/avisos/generar  encola recordatorios de plazos y audiencias
+             POST /api/avisos/despachar  saca la cola
+  Usuarios   GET  /api/usuarios        POST /api/usuarios        POST /api/usuarios/{id}
+  Seguridad  GET  /api/seguridad       POST /api/seguridad/desbloquear
+             POST /api/seguridad/2fa/preparar | /confirmar | /apagar
+  Retención  GET  /api/retencion       POST /api/retencion       POST /api/retencion/ejecutar
+  Titulares  GET  /api/titulares       POST /api/titulares/exportar | /anonimizar
+
+Los errores del dominio salen con su código: 400 lo que se puede corregir, 401 lo que pide
+entrar de nuevo, 403 lo que no le toca a ese rol, 429 la cuenta bloqueada por intentos
+fallidos. Nada de esto reemplaza a `auth.exigir`, que se comprueba en cada endpoint.
 """
 from __future__ import annotations
 
@@ -35,13 +52,14 @@ import hmac
 import os
 import pathlib
 import secrets
+import tempfile
 from collections.abc import Iterator
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import __version__, auth, plazos, service
+from . import __version__, auth, notificaciones, plazos, retencion, seguridad, service, titulares
 from .db import DB
 
 ESTATICOS = pathlib.Path(__file__).resolve().parent / "static"
@@ -63,6 +81,107 @@ class Credenciales(BaseModel):
     password: str
     #: Código del segundo factor (TOTP). Opcional: sólo lo piden las cuentas que lo tienen.
     codigo: str | None = None
+
+
+class NuevoCliente(BaseModel):
+    nombre: str
+    rut: str | None = None
+    email: str | None = None
+    telefono: str | None = None
+    direccion: str | None = None
+    tipo_persona: str = "natural"
+
+
+class NuevaCausa(BaseModel):
+    caratula: str
+    cliente_id: int | None = None
+    rol_rit: str | None = None
+    tribunal: str | None = None
+    materia: str | None = None
+    observaciones: str | None = None
+
+
+class NuevaAudiencia(BaseModel):
+    causa_id: int
+    tipo: str
+    fecha: str
+    hora: str | None = None
+    modalidad: str = "presencial"
+    lugar_o_url: str | None = None
+    minuta: str | None = None
+    responsable_id: int | None = None
+
+
+class ConfigAvisos(BaseModel):
+    """Lo que el módulo de avisos puede tocar. Un campo vacío significa «no lo cambies»."""
+
+    email: dict | None = None
+    sms: dict | None = None
+    canales_por_defecto: list[str] | None = None
+    dias_de_aviso: int | None = None
+    avisar_asignaciones: bool | None = None
+
+
+class PruebaAviso(BaseModel):
+    canal: str = "email"
+
+
+class NuevoUsuario(BaseModel):
+    nombre: str
+    email: str
+    rol: str
+    password: str | None = None
+    telefono: str | None = None
+
+
+class CambioUsuario(BaseModel):
+    rol: str | None = None
+    telefono: str | None = None
+    activo: bool | None = None
+    password: str | None = None
+
+
+class Cuenta(BaseModel):
+    email: str
+
+
+class Alta2FA(BaseModel):
+    email: str
+    codigo: str | None = None
+
+
+class Motivo(BaseModel):
+    email: str
+    motivo: str
+
+
+class Politica(BaseModel):
+    tipo: str
+    meses: int
+    motivo: str
+
+
+class EjecutarRetencion(BaseModel):
+    motivo: str
+    #: Por defecto simula: mirar qué se haría es lo primero, y no rompe nada.
+    simular: bool = True
+
+
+class Titular(BaseModel):
+    rut: str | None = None
+    nombre: str | None = None
+    email: str | None = None
+
+
+class AnonimizarTitular(BaseModel):
+    rut: str | None = None
+    nombre: str | None = None
+    email: str | None = None
+    motivo: str
+    simular: bool = True
+    redactar_textos: bool = True
+    #: Escribir ANONIMIZAR es la confirmación humana de una acción sin vuelta atrás.
+    confirmar: str = ""
 
 
 def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
@@ -142,6 +261,27 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
     def publico(usuario: dict) -> dict:
         return {k: usuario.get(k) for k in ("id", "nombre", "email", "rol", "estudio_id")}
 
+    # ------------------------------------------------- errores del dominio
+    # La interfaz tiene que decir *por qué no*, no devolver un 500 con un volcado: los
+    # errores que el CRM ya sabe explicar se traducen a un código con sentido y a su
+    # mensaje. Lo que no esté acá sigue siendo un error del programa, y se ve entero.
+
+    @app.exception_handler(auth.ErrorSegundoFactor)
+    async def _segundo_factor(peticion, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=401)
+
+    @app.exception_handler(auth.ErrorBloqueado)
+    async def _bloqueado(peticion, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=429)
+
+    @app.exception_handler(auth.ErrorPermiso)
+    async def _permiso(peticion, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=403)
+
+    @app.exception_handler(ValueError)
+    async def _negocio(peticion, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
     # ----------------------------------------------------------------- panel
     @app.get("/", response_class=HTMLResponse)
     def panel(
@@ -210,6 +350,10 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
             "usuario": publico(usuario),
             "estudio": {"id": estudio["id"], "nombre": estudio["nombre"], "modo": estudio["modo"]},
             "via": usuario.get("_via"),
+            # Lo que esta persona puede hacer, para que la interfaz le muestre sus módulos
+            # y no botones que van a dar error. El permiso se vuelve a exigir en cada
+            # endpoint: esto es información para la pantalla, no la seguridad.
+            "permisos": sorted(auth.PERMISOS.get(usuario["rol"], set())),
             "version": __version__,
         }
 
@@ -285,5 +429,280 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
     def api_cumplido(plazo_id: int, ctx: dict = Depends(contexto_peticion)):
         service.marcar_cumplido(ctx["db"], ctx["usuario"], plazo_id)
         return {"ok": True, "plazo": plazo_id}
+
+    # ---------------------------------------------------------------- módulos
+    # Cada módulo del CRM tiene su puerta acá. Todo pasa por `contexto_peticion` (sesión o
+    # token) y por `auth.exigir` (permiso): la interfaz es otra forma de escribir las
+    # reglas, no un atajo para saltearlas. Las claves de correo y SMS nunca salen de acá.
+
+    @app.get("/api/avisos")
+    def api_avisos(ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.exigir(db, usuario, notificaciones.PERMISO)
+        config = notificaciones.cargar_config()
+        correo = config.get("email") or {}
+        sms = config.get("sms") or {}
+        return {
+            "canales": notificaciones.resumen_config(config),
+            "ajustes": {
+                "dias_de_aviso": int(config.get("dias_de_aviso", notificaciones.DIAS_DE_AVISO)),
+                "canales_por_defecto": list(config.get("canales_por_defecto") or ["email"]),
+                "avisar_asignaciones": config.get("avisar_asignaciones", True) is not False,
+            },
+            # Los campos que la persona ya cargó, para no hacerle escribir todo de nuevo.
+            # La clave y el token no están acá: no se devuelven nunca.
+            "formulario": {
+                "email": {k: v for k, v in correo.items() if k != "clave"},
+                "sms": {k: v for k, v in sms.items() if k != "token"},
+            },
+            "estado": notificaciones.estado(db),
+            "cola": db.todos(
+                "SELECT id, canal, destino, asunto, estado, intentos, ultimo_error, creada_en, enviada_en "
+                "FROM notificaciones ORDER BY id DESC LIMIT 25"
+            ),
+            "archivo": str(notificaciones.ruta_config()),
+        }
+
+    @app.post("/api/avisos/config")
+    def api_avisos_config(datos: ConfigAvisos, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.exigir(db, usuario, notificaciones.PERMISO)
+        cambios = {k: v for k, v in datos.model_dump().items() if v is not None}
+        if not cambios:
+            raise ValueError("no hay nada que guardar")
+        notificaciones.guardar_config(cambios)
+        auth.auditar(
+            db, usuario["estudio_id"], usuario["id"], "avisos.configurar", "notificaciones", None,
+            ", ".join(sorted(cambios)),     # qué secciones se tocaron, nunca los valores
+        )
+        return {"ok": True, "canales": notificaciones.resumen_config()}
+
+    @app.post("/api/avisos/probar")
+    def api_avisos_probar(datos: PruebaAviso, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.exigir(db, usuario, notificaciones.PERMISO)
+        canal = datos.canal if datos.canal in notificaciones.CANALES else "email"
+        # El canal de prueba no sale a la red: el destino es sólo para el registro.
+        destino = (usuario.get("email") if canal in ("email", "consola") else usuario.get("telefono")) or ""
+        if not destino:
+            raise ValueError(
+                f"tu usuario no tiene {'correo' if canal == 'email' else 'teléfono'} cargado: "
+                f"cárgalo en el módulo de usuarios y vuelve a probar"
+            )
+        identificador = notificaciones.encolar(
+            db, usuario["estudio_id"], canal, destino,
+            "Prueba de avisos del CRM. Si estás leyendo esto, el canal quedó bien configurado.",
+            clave=f"prueba:{canal}:{usuario['id']}:{dt.datetime.now().strftime('%Y%m%d%H%M%S')}",
+            asunto="Prueba de avisos del CRM",
+        )
+        resultado = notificaciones.enviar_aviso(db, usuario, identificador) if identificador else {"enviado": False, "error": "no se pudo encolar la prueba"}
+        auth.auditar(
+            db, usuario["estudio_id"], usuario["id"], "avisos.probar", "notificaciones", identificador,
+            f"canal={canal} destino={destino} ok={resultado['enviado']}",
+        )
+        return {"canal": canal, "destino": destino, **resultado}
+
+    @app.post("/api/avisos/generar")
+    def api_avisos_generar(ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        return notificaciones.generar_recordatorios(db, usuario)
+
+    @app.post("/api/avisos/despachar")
+    def api_avisos_despachar(ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        return notificaciones.enviar_pendientes(db, usuario)
+
+    # ------------------------------------------------------------- usuarios
+    @app.get("/api/usuarios")
+    def api_usuarios(ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.exigir(db, usuario, "usuario.gestionar")
+        filas = db.todos(
+            "SELECT id, nombre, email, rol, telefono, activo, totp_activo FROM usuarios "
+            "WHERE estudio_id = ? ORDER BY CASE rol WHEN 'socio' THEN 0 WHEN 'administrador' THEN 1 ELSE 2 END, nombre",
+            (usuario["estudio_id"],),
+        )
+        return {
+            "usuarios": filas,
+            "roles": list(auth.ROLES),
+            "bloqueos": {f["email"]: seguridad.bloqueo(db, f["email"]) for f in filas},
+        }
+
+    @app.post("/api/usuarios")
+    def api_crear_usuario(datos: NuevoUsuario, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.exigir(db, usuario, "usuario.gestionar")
+        if not datos.password or len(datos.password) < 10:
+            # La misma regla que en la terminal: son datos de clientes.
+            raise ValueError("la contraseña necesita al menos 10 caracteres")
+        creado = auth.crear_usuario(
+            db, usuario["estudio_id"], datos.nombre, datos.email, datos.rol,
+            datos.password, actor_id=usuario["id"],
+        )
+        if datos.telefono:
+            auth.actualizar_usuario(db, usuario, datos.email, telefono=datos.telefono)
+        return {"id": creado, "email": datos.email.lower(), "rol": datos.rol}
+
+    @app.post("/api/usuarios/{usuario_id}")
+    def api_editar_usuario(usuario_id: int, datos: CambioUsuario, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        fila = db.uno(
+            "SELECT * FROM usuarios WHERE id = ? AND estudio_id = ?", (usuario_id, usuario["estudio_id"])
+        )
+        if not fila:
+            raise ValueError(f"no existe el usuario {usuario_id} en este estudio")
+        if datos.password is not None and len(datos.password) < 10:
+            raise ValueError("la contraseña necesita al menos 10 caracteres")
+        actualizado = auth.actualizar_usuario(
+            db, usuario, fila["email"], rol=datos.rol, telefono=datos.telefono,
+            activo=datos.activo, password=datos.password,
+        )
+        if datos.password is not None or datos.activo is False:
+            # Cambiar la clave o cortar el acceso invalida las sesiones abiertas de esa cuenta.
+            db.ejecutar("DELETE FROM sesiones WHERE usuario_id = ?", (fila["id"],))
+        actualizado.pop("password_hash", None)
+        return actualizado
+
+    # ------------------------------------------------------------ seguridad
+    @app.get("/api/seguridad")
+    def api_seguridad(minutos: int = 15, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.exigir(db, usuario, "usuario.gestionar")
+        cuentas = auth.estado_segundo_factor(db, usuario)
+        for cuenta in cuentas:
+            cuenta["bloqueo"] = seguridad.bloqueo(db, cuenta["email"])
+        return {
+            "intentos": seguridad.intentos_fallidos(db, minutos=minutos, estudio_id=usuario["estudio_id"]),
+            "cuentas": cuentas,
+            "umbrales": {
+                "intentos_alerta": seguridad.UMBRAL_INTENTOS,
+                "bloqueo_intentos": seguridad.BLOQUEO_INTENTOS,
+                "bloqueo_minutos": seguridad.BLOQUEO_MINUTOS,
+            },
+        }
+
+    @app.post("/api/seguridad/desbloquear")
+    def api_desbloquear(datos: Cuenta, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        estado = auth.desbloquear(db, usuario, datos.email)
+        return {"email": datos.email, **estado}
+
+    @app.post("/api/seguridad/2fa/preparar")
+    def api_2fa_preparar(datos: Cuenta, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        return auth.preparar_segundo_factor(db, usuario, datos.email)
+
+    @app.post("/api/seguridad/2fa/confirmar")
+    def api_2fa_confirmar(datos: Alta2FA, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        return auth.confirmar_segundo_factor(db, usuario, datos.email, datos.codigo)
+
+    @app.post("/api/seguridad/2fa/apagar")
+    def api_2fa_apagar(datos: Motivo, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.desactivar_segundo_factor(db, usuario, datos.email, datos.motivo)
+        return {"email": datos.email, "activo": False}
+
+    # ------------------------------------------------------------ retención
+    @app.get("/api/retencion")
+    def api_retencion(ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.exigir(db, usuario, retencion.PERMISO)
+        datos = retencion.informe(db)
+        return {
+            **datos,
+            "tipos": list(retencion.SUGERENCIAS),
+        }
+
+    @app.post("/api/retencion")
+    def api_definir_retencion(datos: Politica, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        retencion.definir(db, usuario, datos.tipo, datos.meses, datos.motivo)
+        return {"ok": True, **retencion.informe(db)}
+
+    @app.post("/api/retencion/ejecutar")
+    def api_ejecutar_retencion(datos: EjecutarRetencion, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        return retencion.aplicar(db, usuario, datos.motivo, simular=datos.simular)
+
+    # ------------------------------------------------------------- clientes
+    @app.get("/api/clientes")
+    def api_clientes(q: str | None = None, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.exigir(db, usuario, "cliente.leer")
+        if q:
+            return titulares.buscar(db, usuario, texto=q)
+        return db.todos(
+            "SELECT id, nombre, rut, email, telefono, direccion, tipo_persona FROM clientes "
+            "WHERE estudio_id = ? ORDER BY nombre",
+            (usuario["estudio_id"],),
+        )
+
+    @app.post("/api/clientes")
+    def api_crear_cliente(datos: NuevoCliente, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        identificador = service.crear_cliente(
+            db, usuario, datos.nombre, datos.rut, tipo_persona=datos.tipo_persona,
+            email=datos.email, telefono=datos.telefono, direccion=datos.direccion,
+        )
+        return {"id": identificador, "nombre": datos.nombre}
+
+    @app.post("/api/causas")
+    def api_crear_causa(datos: NuevaCausa, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        identificador = service.crear_causa(
+            db, usuario, datos.caratula, cliente_id=datos.cliente_id, rol_rit=datos.rol_rit,
+            tribunal=datos.tribunal, materia=datos.materia, observaciones=datos.observaciones,
+        )
+        return {"id": identificador, "caratula": datos.caratula}
+
+    @app.post("/api/audiencias")
+    def api_crear_audiencia(datos: NuevaAudiencia, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        identificador = service.crear_audiencia(
+            db, usuario, datos.causa_id, datos.tipo, datos.fecha, datos.hora,
+            modalidad=datos.modalidad, lugar_o_url=datos.lugar_o_url, minuta=datos.minuta,
+            responsable_id=datos.responsable_id,
+        )
+        return {"id": identificador}
+
+    # ---------------------------------------------------- derechos del titular
+    @app.get("/api/titulares")
+    def api_buscar_titular(
+        rut: str | None = None, nombre: str | None = None, email: str | None = None,
+        texto: str | None = None, ctx: dict = Depends(contexto_peticion),
+    ):
+        db, usuario = ctx["db"], ctx["usuario"]
+        return titulares.buscar(db, usuario, rut=rut, nombre=nombre, email=email, texto=texto)
+
+    @app.post("/api/titulares/exportar")
+    def api_exportar_titular(datos: Titular, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        with tempfile.TemporaryDirectory() as carpeta:
+            destino = pathlib.Path(carpeta) / "titular.json"
+            informe = titulares.exportar(db, usuario, rut=datos.rut, nombre=datos.nombre,
+                                         email=datos.email, destino=str(destino))
+            contenido = destino.read_bytes()
+        return Response(
+            content=contenido,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": 'attachment; filename="expediente-titular.json"',
+                "X-OpenLegal-Sha256": informe["sha256"],
+            },
+        )
+
+    @app.post("/api/titulares/anonimizar")
+    def api_anonimizar_titular(datos: AnonimizarTitular, ctx: dict = Depends(contexto_peticion)):
+        db, usuario = ctx["db"], ctx["usuario"]
+        if not datos.simular and datos.confirmar.strip().upper() != "ANONIMIZAR":
+            raise ValueError(
+                "la anonimización no se puede deshacer: escribe ANONIMIZAR en la confirmación "
+                "(o pide primero la simulación, que no cambia nada)"
+            )
+        return titulares.anonimizar(
+            db, usuario, rut=datos.rut, nombre=datos.nombre, email=datos.email,
+            motivo=datos.motivo, simular=datos.simular, redactar_textos=datos.redactar_textos,
+        )
 
     return app

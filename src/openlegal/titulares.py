@@ -184,6 +184,37 @@ def _bitacora_del_titular(db: DB, estudio_id: int, agujas: list[str]) -> list[di
 
 
 # ------------------------------------------------------------------- exportar
+def buscar(
+    db: DB,
+    usuario: dict,
+    *,
+    rut: str | None = None,
+    nombre: str | None = None,
+    email: str | None = None,
+    texto: str | None = None,
+) -> list[dict]:
+    """Busca titulares por RUT, nombre, correo o texto libre.
+
+    Es la puerta del módulo de datos del panel: el mismo criterio que usa `exportar`, para
+    que lo que se ve en pantalla sea exactamente lo que se va a entregar o a anonimizar.
+    """
+    auth.exigir(db, usuario, PERMISO)
+    if texto and not (rut or nombre or email):
+        aguja = _normalizar(texto)
+        # Se consulta directo y no se pasa por `_clientes`: esa exige un identificador, y acá
+        # el criterio es justamente el texto libre (nombre, RUT o correo).
+        todos = db.todos(
+            "SELECT * FROM clientes WHERE estudio_id = ? ORDER BY nombre", (usuario["estudio_id"],)
+        )
+        return [
+            fila for fila in todos
+            if aguja in _normalizar(fila.get("nombre") or "")
+            or aguja in _limpiar_rut(fila.get("rut") or "")
+            or aguja in _normalizar(fila.get("email") or "")
+        ]
+    return _clientes(db, usuario["estudio_id"], rut, nombre, email)
+
+
 def exportar(
     db: DB,
     usuario: dict,

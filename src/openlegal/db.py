@@ -44,7 +44,13 @@ class DB:
             ruta = self.url.replace("sqlite:///", "", 1)
             if ruta not in (":memory:", ""):
                 pathlib.Path(ruta).parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(ruta)
+            # `check_same_thread=False` porque el panel web abre la conexión en un hilo y la
+            # cierra en otro: FastAPI atiende cada petición en un hilo del grupo, y la parte
+            # final de una dependencia (`yield`) puede tocar otro. Sin esto, el cierre revienta
+            # con «SQLite objects created in a thread can only be used in that same thread» y
+            # el módulo del panel devuelve un error. Cada petición abre su propia conexión y la
+            # usa de a una operación por vez, así que no hay dos hilos escribiendo a la vez.
+            conn = sqlite3.connect(ruta, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             if ruta != ":memory:":

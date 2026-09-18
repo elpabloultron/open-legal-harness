@@ -14,11 +14,16 @@
     <div class="sesion" id="sesion"></div>
 
     <nav class="pestanas" id="pestanas">
-      <button class="pestana activa" data-vista="vencimientos">Plazos</button>
-      <button class="pestana" data-vista="causas">Causas</button>
+      <button class="pestana activa" data-vista="inicio">Inicio</button>
+      <button class="pestana" data-vista="vencimientos">Plazos</button>
       <button class="pestana" data-vista="agenda">Agenda</button>
-      <button class="pestana" data-vista="panel">Panel</button>
-      <button class="pestana" data-vista="nuevo">+ Plazo</button>
+      <button class="pestana" data-vista="causas">Causas</button>
+      <button class="pestana" data-vista="clientes">Clientes</button>
+      <button class="pestana" data-vista="avisos" data-permiso="aviso.gestionar">Avisos</button>
+      <button class="pestana" data-vista="usuarios" data-permiso="usuario.gestionar">Usuarios</button>
+      <button class="pestana" data-vista="seguridad" data-permiso="usuario.gestionar">Seguridad</button>
+      <button class="pestana" data-vista="retencion" data-permiso="usuario.gestionar">Retención</button>
+      <button class="pestana" data-vista="datos" data-permiso="titular.gestionar">Datos del titular</button>
     </nav>
 
     <main id="vista" class="vista"><p class="cargando">cargando…</p></main>

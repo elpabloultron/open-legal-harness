@@ -205,6 +205,57 @@ def actualizar_usuario(
     return fila
 
 
+def preparar_segundo_factor(db: DB, actor: dict, email: str) -> dict:
+    """Genera el secreto y lo deja **pendiente**: todavía no exige código para entrar.
+
+    Es la primera mitad del alta desde el panel. Se deja pendiente a propósito: si se activara
+    con el secreto recién generado y la persona copió mal la clave en el teléfono, quedaría
+    afuera de su propia cuenta. Se activa recién cuando manda un código que sirve.
+    """
+    exigir(db, actor, "usuario.gestionar")
+    fila = db.uno(
+        "SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (actor["estudio_id"], email.lower())
+    )
+    if not fila:
+        raise ValueError(f"no existe el usuario {email} en el estudio {actor['estudio_id']}")
+    secreto = seguridad.nuevo_secreto()
+    db.ejecutar("UPDATE usuarios SET totp_secret = ?, totp_activo = 0 WHERE id = ?", (secreto, fila["id"]))
+    auditar(
+        db, actor["estudio_id"], actor["id"], "usuario.2fa.preparar", "usuarios", fila["id"],
+        f"{email.lower()} por {actor['email']}",
+    )
+    return {
+        "email": email.lower(),
+        "secreto": secreto,
+        "uri": seguridad.uri_otpauth(secreto, email.lower()),
+        "activo": False,
+        "aviso": "carga el secreto en la app de autenticación y confirma con un código de 6 dígitos",
+    }
+
+
+def confirmar_segundo_factor(db: DB, actor: dict, email: str, codigo: str | None) -> dict:
+    """Activa el segundo factor sólo si el código corresponde al secreto ya cargado."""
+    exigir(db, actor, "usuario.gestionar")
+    fila = db.uno(
+        "SELECT * FROM usuarios WHERE estudio_id = ? AND email = ?", (actor["estudio_id"], email.lower())
+    )
+    if not fila:
+        raise ValueError(f"no existe el usuario {email} en el estudio {actor['estudio_id']}")
+    if not fila.get("totp_secret"):
+        raise ValueError("ese usuario no tiene un alta de segundo factor empezada")
+    if not seguridad.codigo_valido(fila["totp_secret"], codigo):
+        raise ErrorSegundoFactor(
+            "el código no coincide con el secreto: revisa que el teléfono tenga la hora automática "
+            "y vuelve a probar (el alta queda pendiente, no se activó nada)"
+        )
+    db.ejecutar("UPDATE usuarios SET totp_activo = 1 WHERE id = ?", (fila["id"],))
+    auditar(
+        db, actor["estudio_id"], actor["id"], "usuario.2fa.activar", "usuarios", fila["id"],
+        f"{email.lower()} por {actor['email']} · confirmado con código",
+    )
+    return {"email": email.lower(), "activo": True}
+
+
 def autenticar(db: DB, email: str, password: str, codigo: str | None = None) -> dict | None:
     """Verifica credenciales y, si el usuario tiene segundo factor, también el código.
 

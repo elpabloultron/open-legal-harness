@@ -144,9 +144,11 @@ jobs:
             bash -n "$guion" || { echo "✗ $guion no es bash válido"; exit 1; }
             echo "  ✓ $guion"
           done
-      - name: Instalar el CRM (el instalador usa el comando openlegal)
-        run: python -m pip install --quiet -e .
+      - name: Instalar el CRM con la interfaz (el instalador usa el comando openlegal)
+        run: python -m pip install --quiet -e ".[ui]"
       - name: El respaldo tiene que servir (copia consistente, rotación y base que no existe)
         run: python scripts/prueba_respaldo.py
       - name: El instalador de oficina escribe sus servicios y es idempotente
         run: python scripts/prueba_instalador.py
+      - name: El panel de verdad (servidor real, HTTP y cookies)
+        run: python scripts/prueba_panel.py

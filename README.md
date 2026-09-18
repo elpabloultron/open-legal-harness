@@ -261,6 +261,35 @@ openlegal --db "$DB" usuario clave --email admin@estudio.cl
 openlegal --db "$DB" usuario desactivar --email luis@estudio.cl   # corta el acceso sin borrar historial
 ```
 
+## Los módulos del panel
+
+Todo se hace por la interfaz: la terminal queda para quien la prefiera, no como requisito.
+
+| Módulo | Qué se hace ahí |
+|---|---|
+| **Inicio** | Cómo está el estudio: causas por estado, carga por abogado, quién no tiene segundo factor, cuántos avisos esperan y si algo falló |
+| **Plazos** | Vencimientos con días restantes y marcar cumplido en un clic |
+| **Agenda** | Audiencias próximas y agendar una nueva: al agendarla, el responsable recibe su aviso |
+| **Causas** | Las causas visibles y crear una |
+| **Clientes** | Listado, búsqueda por nombre/RUT/correo y alta |
+| **Avisos** | Configurar correo y SMS, probar los canales, generar recordatorios, despachar la cola y ver qué falló |
+| **Usuarios** | Crear personas, cambiar rol, cargar el teléfono, cortar el acceso y fijar contraseña |
+| **Seguridad** | Quién tiene segundo factor (y activarlo), intentos fallidos, cuentas bloqueadas y destrabarlas |
+| **Retención** | Declarar cuánto se conserva cada dato, ver qué expedientes cumplieron su plazo, simular y ejecutar |
+| **Datos del titular** | Buscar a un titular, entregarle su expediente (acceso y portabilidad) y anonimizar con confirmación |
+
+Tres reglas que la interfaz respeta, porque son las mismas del CRM:
+
+1. **Cada uno ve sus módulos.** Las pestañas que un rol no puede usar no se muestran, y el
+   permiso se vuelve a exigir en cada endpoint: esconder un botón no es seguridad, es cortesía.
+2. **Ninguna clave se muestra.** El formulario de correo y SMS se llena con lo que ya está
+   cargado menos los secretos; si el campo se deja vacío, se conserva el que había.
+3. **Lo que no se deshace, se confirma.** La anonimización pide escribir `ANONIMIZAR`, y la
+   retención ejecuta en modo simulación salvo que se pida lo contrario.
+
+Para verlo sin montar nada: `bash scripts/demo_local.sh --servir` levanta un estudio de ejemplo,
+y `python3 scripts/prueba_panel.py` recorre los módulos por HTTP contra un servidor real.
+
 ## Avisos por correo y SMS
 
 El CRM avisa sin quedarse esperando a nadie: los avisos **se encolan** en la base del
