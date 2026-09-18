@@ -150,5 +150,7 @@ jobs:
         run: python scripts/prueba_respaldo.py
       - name: El instalador de oficina escribe sus servicios y es idempotente
         run: python scripts/prueba_instalador.py
+      - name: Las pruebas del panel (con la interfaz instalada)
+        run: python -m unittest tests.test_panel -q
       - name: El panel de verdad (servidor real, HTTP y cookies)
         run: python scripts/prueba_panel.py

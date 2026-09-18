@@ -20,15 +20,21 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from openlegal import auth, seguridad, service  # noqa: E402
 from openlegal.db import DB  # noqa: E402
-from openlegal.web import crear_app  # noqa: E402
 
+# El núcleo del CRM es sólo librería estándar: la suite tiene que correr igual sin los extras
+# de la interfaz (así corre en CI, en las ocho combinaciones de sistema y Python). Si falta
+# FastAPI, estas pruebas se saltean en vez de romper la suite del núcleo.
 try:
+    from openlegal.web import crear_app
     from starlette.testclient import TestClient
-except ModuleNotFoundError:  # pragma: no cover - la suite corre con los extras de la interfaz
-    TestClient = None  # type: ignore[assignment]
+except ImportError:  # pragma: no cover - depende del entorno
+    crear_app = None            # type: ignore[assignment]
+    TestClient = None           # type: ignore[assignment]
+
+SIN_INTERFAZ = "falta el extra de la interfaz (pip install -e '.[ui]')"
 
 
-@unittest.skipIf(TestClient is None, "falta el extra de la interfaz (pip install -e '.[ui]')")
+@unittest.skipIf(TestClient is None, SIN_INTERFAZ)
 class BasePanel(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
