@@ -11,6 +11,8 @@
   openlegal agenda --dias 15
   openlegal panel
   openlegal auditoria
+  openlegal titular exportar --rut 11.111.111-1          # acceso + portabilidad, JSON con hash
+  openlegal titular anonimizar --rut 11.111.111-1 --motivo "pide supresión"   # sin --escribir, sólo informa
   openlegal serve --host 127.0.0.1 --port 8899   # panel web (CRM en el sidebar del harness)
 """
 from __future__ import annotations
@@ -22,7 +24,7 @@ import json
 import pathlib
 import sys
 
-from . import auth, ia, plazos, service
+from . import auth, ia, plazos, service, titulares
 from .db import DB
 
 
@@ -438,6 +440,47 @@ def cmd_serve(args) -> None:
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
+def cmd_titular_exportar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    informe = titulares.exportar(
+        db, usuario, rut=args.rut, nombre=args.nombre, email=args.email, destino=args.destino
+    )
+    print("exportación lista: sirve para el derecho de acceso y para el de portabilidad")
+    print(f"  archivo:   {informe['archivo']}")
+    print(f"  sha256:    {informe['sha256']}")
+    print(
+        f"  contenido: {informe['titulares']} titular(es) · {informe['causas']} causa(s) · "
+        f"{informe['respaldos']} respaldo(s) · {informe['entradas_auditoria']} entrada(s) de bitácora"
+    )
+    if informe["respaldos_ausentes"]:
+        print(f"  ojo: {informe['respaldos_ausentes']} documento(s) del registro no están en disco")
+    print("  aviso: los documentos escaneados no van dentro del archivo; hay que adjuntarlos aparte")
+
+
+def cmd_titular_anonimizar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    informe = titulares.anonimizar(
+        db, usuario, rut=args.rut, nombre=args.nombre, email=args.email, motivo=args.motivo,
+        simular=not args.escribir, redactar_textos=not args.sin_redactar_textos,
+    )
+    if informe["simulado"]:
+        print("SIMULACIÓN: no se escribió nada. Para ejecutarla de verdad, agrega --escribir")
+    print(f"titular(es): {informe['titulares']} · causa(s) alcanzada(s): {len(informe['causas'])}")
+    borrados = sum(len(f["cambios"]) for f in informe["identificadores_borrados"])
+    apariciones = sum(t["reemplazos"] for t in informe["textos_redactados"])
+    print(f"  identificadores directos que se borran: {borrados}")
+    print(f"  textos que se redactan: {len(informe['textos_redactados'])} ({apariciones} apariciones del nombre)")
+    for cambio in informe["conservado"]:
+        print(f"  se conserva · {cambio['tabla']}: {cambio['filas']} fila(s) — {cambio['motivo']}")
+    print(f"  aviso: {informe['aviso']}")
+    if not informe["simulado"]:
+        print("  la operación quedó en la bitácora como titular.anonimizar, con su motivo")
+
+
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="openlegal", description="Harness legal chileno con CRM")
     parser.add_argument("--db", help="URL de la base: sqlite:///ruta.db o postgresql://...")
@@ -488,6 +531,31 @@ def construir_parser() -> argparse.ArgumentParser:
     pc.add_argument("--usuario", help="email del usuario que ejecuta")
     pc.add_argument("--estudio", type=int)
     pc.set_defaults(func=cmd_cliente_crear)
+
+    p = sub.add_parser("titular", help="derechos del titular: acceso/portabilidad y supresión de datos")
+    sub_t = p.add_subparsers(dest="accion", required=True)
+    pt = sub_t.add_parser("exportar", help="reúne todo lo del titular en un JSON con su hash (acceso y portabilidad)")
+    pt.add_argument("--rut", help="RUT del titular (con o sin puntos)")
+    pt.add_argument("--nombre", help="nombre del titular; calza sin distinguir acentos")
+    pt.add_argument("--email", help="correo del titular")
+    pt.add_argument("--destino", help="ruta del archivo de salida (por defecto ~/.openlegal/arsopb)")
+    pt.add_argument("--usuario", help="email del usuario que ejecuta")
+    pt.add_argument("--estudio", type=int)
+    pt.set_defaults(func=cmd_titular_exportar)
+    pt = sub_t.add_parser("anonimizar", help="borra los identificadores directos y redacta el nombre en los textos")
+    pt.add_argument("--rut", help="RUT del titular (con o sin puntos)")
+    pt.add_argument("--nombre", help="nombre del titular; calza sin distinguir acentos")
+    pt.add_argument("--email", help="correo del titular")
+    pt.add_argument("--motivo", required=True, help="por qué se anonimiza: queda escrito en la bitácora")
+    pt.add_argument(
+        "--escribir",
+        action="store_true",
+        help="ejecuta la anonimización; sin esta bandera sólo informa qué cambiaría",
+    )
+    pt.add_argument("--sin-redactar-textos", action="store_true", help="no toca los textos libres del expediente")
+    pt.add_argument("--usuario", help="email del usuario que ejecuta")
+    pt.add_argument("--estudio", type=int)
+    pt.set_defaults(func=cmd_titular_anonimizar)
 
     p = sub.add_parser("causa", help="causas y expedientes")
     sub_ca = p.add_subparsers(dest="accion", required=True)
