@@ -35,6 +35,7 @@ import hmac
 import os
 import pathlib
 import secrets
+from collections.abc import Iterator
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.responses import FileResponse, HTMLResponse
@@ -126,11 +127,15 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
         cookie_sesion: str | None = Cookie(default=None, alias=COOKIE_SESION),
         cookie_token: str | None = Cookie(default=None, alias=COOKIE_TOKEN),
         cabecera: str | None = Header(default=None, alias="X-OpenLegal-Token"),
-    ) -> dict:
-        db = abrir_db()
-        usuario = identidad(db, token_q, cookie_sesion, cookie_token, cabecera)
-        estudio = db.uno("SELECT * FROM estudios WHERE id = ?", (usuario["estudio_id"],))
-        return {"db": db, "usuario": usuario, "estudio": estudio}
+    ) -> Iterator[dict]:
+        # Dependencia con `yield`: la conexión se cierra cuando termina la petición.
+        # Antes se abría y no se cerraba nunca: el panel dejaba una conexión viva por
+        # petición (y en Windows, donde un archivo abierto no se puede borrar, eso
+        # rompía la limpieza de las bases temporales).
+        with abrir_db() as db:
+            usuario = identidad(db, token_q, cookie_sesion, cookie_token, cabecera)
+            estudio = db.uno("SELECT * FROM estudios WHERE id = ?", (usuario["estudio_id"],))
+            yield {"db": db, "usuario": usuario, "estudio": estudio}
 
     def publico(usuario: dict) -> dict:
         return {k: usuario.get(k) for k in ("id", "nombre", "email", "rol", "estudio_id")}
@@ -164,30 +169,30 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
     # --------------------------------------------------------------- sesión
     @app.post("/api/login")
     def api_login(datos: Credenciales, respuesta: Response):
-        db = abrir_db()
-        usuario = auth.autenticar(db, datos.email, datos.password)
-        if not usuario:
-            # El intento fallido también se registra: sirve para detectar abuso.
-            auth.auditar(db, None, None, "login.fallido", "usuarios", None, datos.email.lower()[:80])
-            raise HTTPException(status_code=401, detail="correo o contraseña incorrectos")
-        token_sesion = usuario.pop("token")
-        respuesta.set_cookie(COOKIE_SESION, token_sesion, httponly=True, samesite="strict")
-        auth.auditar(db, usuario["estudio_id"], usuario["id"], "login.ok", "usuarios", usuario["id"])
-        return {"usuario": publico(usuario)}
+        with abrir_db() as db:
+            usuario = auth.autenticar(db, datos.email, datos.password)
+            if not usuario:
+                # El intento fallido también se registra: sirve para detectar abuso.
+                auth.auditar(db, None, None, "login.fallido", "usuarios", None, datos.email.lower()[:80])
+                raise HTTPException(status_code=401, detail="correo o contraseña incorrectos")
+            token_sesion = usuario.pop("token")
+            respuesta.set_cookie(COOKIE_SESION, token_sesion, httponly=True, samesite="strict")
+            auth.auditar(db, usuario["estudio_id"], usuario["id"], "login.ok", "usuarios", usuario["id"])
+            return {"usuario": publico(usuario)}
 
     @app.post("/api/logout")
     def api_logout(
         respuesta: Response,
         cookie_sesion: str | None = Cookie(default=None, alias=COOKIE_SESION),
     ):
-        db = abrir_db()
-        if cookie_sesion:
-            usuario = auth.usuario_por_token(db, cookie_sesion)
-            auth.cerrar_sesion(db, cookie_sesion)
-            if usuario:
-                auth.auditar(db, usuario["estudio_id"], usuario["id"], "logout", "usuarios", usuario["id"])
-        respuesta.delete_cookie(COOKIE_SESION)
-        return {"ok": True}
+        with abrir_db() as db:
+            if cookie_sesion:
+                usuario = auth.usuario_por_token(db, cookie_sesion)
+                auth.cerrar_sesion(db, cookie_sesion)
+                if usuario:
+                    auth.auditar(db, usuario["estudio_id"], usuario["id"], "logout", "usuarios", usuario["id"])
+            respuesta.delete_cookie(COOKIE_SESION)
+            return {"ok": True}
 
     @app.get("/api/sesion")
     def api_sesion(ctx: dict = Depends(contexto_peticion)):

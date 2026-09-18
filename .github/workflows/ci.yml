@@ -86,6 +86,23 @@ jobs:
           assert len(feriados) > 10, feriados
           print(f'calendario: {len(feriados)} feriados de 2026')"
 
+  recursos:
+    name: nada queda abierto (lo que Windows castiga)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # En Linux se puede borrar un archivo abierto; en Windows no. Esta es la parte
+      # del CI que convierte ese sufrimiento en un aviso temprano: la suite con los
+      # extras (para que corran también las pruebas de la web) y cualquier recurso sin
+      # cerrar tratado como error.
+      - name: La suite con los extras y las fugas como error
+        run: |
+          python -m pip install --quiet -e ".[ui]"
+          python -W error::ResourceWarning -m unittest discover -s tests -q
+
   plugins:
     name: los plugins de la interfaz
     runs-on: ubuntu-latest

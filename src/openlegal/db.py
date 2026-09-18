@@ -35,6 +35,7 @@ class DB:
         self.url = url or os.environ.get("LEGALCRM_DB_URL") or url_por_defecto()
         self.dialecto = "postgres" if self.url.startswith(("postgres://", "postgresql://")) else "sqlite"
         self.conn = self._conectar()
+        self._cerrada = False
 
     # ---------------------------------------------------------------- conexion
     def _conectar(self):
@@ -133,4 +134,19 @@ class DB:
         return aplicadas
 
     def cerrar(self) -> None:
+        """Cierra la conexion. Idempotente: se llama al salir del contexto y en tests.
+
+        Que sea idempotente y que exista el gestor de contexto no es adorno: en Windows
+        un archivo abierto NO se puede borrar, asi que una conexion que queda viva hace
+        fallar la limpieza de la base temporal (y, en produccion, deja la base tomada).
+        """
+        if getattr(self, "_cerrada", False):
+            return
         self.conn.close()
+        self._cerrada = True
+
+    def __enter__(self) -> DB:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.cerrar()

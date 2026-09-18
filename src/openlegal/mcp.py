@@ -126,6 +126,19 @@ class Contexto:
             self._usuario = fila
         return self._usuario
 
+    def cerrar(self) -> None:
+        """Suelta la conexion del MCP, si se llego a abrir.
+
+        Hace falta de verdad: en Windows un archivo abierto no se puede borrar, asi que
+        una conexion viva hace fallar la limpieza de las bases temporales de las
+        pruebas; y el servidor debe soltar la base al terminar, en vez de esperar al
+        recolector de basura.
+        """
+        if self._db is not None:
+            self._db.cerrar()
+            self._db = None
+        self._usuario = None
+
 
 # ------------------------------------------------------------------ herramientas
 def _fecha(valor: str | None) -> str | None:

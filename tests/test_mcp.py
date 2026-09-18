@@ -43,6 +43,10 @@ class BaseMCP(unittest.TestCase):
         self.ctx = Contexto(self.url, "socia@mcp.cl")
 
     def tearDown(self):
+        # El contexto del MCP abre SU PROPIA conexión a la misma base: si no se cierra,
+        # en Windows la limpieza del temporal falla (no se puede borrar un archivo
+        # abierto). Se cierran las dos.
+        self.ctx.cerrar()
         self.db.cerrar()
         self.tmp.cleanup()
 
@@ -243,9 +247,14 @@ class TestServidorRealPorStdio(BaseMCP):
             )
             self.assertEqual(guardado["fecha_vencimiento"], "2026-09-29")
         finally:
-            proceso.stdin.close()
+            # Cerrar TODO lo del subproceso: si queda un descriptor abierto, en Windows
+            # el temporal de la prueba no se puede borrar (un archivo abierto no se
+            # borra) y la prueba falla en la limpieza, no en la afirmación.
             proceso.terminate()
             proceso.wait(timeout=10)
+            for flujo in (proceso.stdin, proceso.stdout, proceso.stderr):
+                if flujo is not None:
+                    flujo.close()
 
 
 class TestRectificarPlazo(BaseMCP):
@@ -306,6 +315,7 @@ class TestRectificarPlazo(BaseMCP):
         )
         service.asignar(self.db, self.socio, self.causa, secretaria_id, "paralegal")
         ctx_secretaria = Contexto(self.url, "carmen@mcp.cl")
+        self.addCleanup(ctx_secretaria.cerrar)
         solicitud = {
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {
@@ -429,6 +439,7 @@ class TestAuditoria(BaseMCP):
         )
         service.asignar(self.db, self.socio, self.causa, secretaria_id, "paralegal")
         contexto = Contexto(self.url, "carmen2@mcp.cl")
+        self.addCleanup(contexto.cerrar)
         respuesta = responder({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "crm_auditoria_leer",
