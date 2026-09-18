@@ -59,7 +59,24 @@ herramienta**.
 10. **No dupliques un plazo que ya está bien.** Antes de crear, compara con los pendientes de la
     causa: si ya existe uno con los mismos días y la misma fecha de notificación, **no crees otro**
     —dilo («ya estaba cargado y coincide»). Cancelar uno correcto para crear un idéntico deja la
-    bitácora llena de ruido y le hace perder tiempo al abogado.
+    bitácora llena de ruido y le hace perder tiempo al abogado. Si el plazo que ya existe está
+    **mal** (días distintos a los que manda el proveído), no lo dupliques ni lo dejes: rectifícalo
+    con `mcp__crm__crm_plazo_actualizar`.
+11. **El memo se escribe desde las lecturas de ESTA corrida, no desde tu memoria de la
+    conversación.** Toda afirmación sobre el estado del CRM (qué plazos existen, cuáles están
+    cancelados, qué ids) tiene que salir de una respuesta de herramienta de esta misma corrida. Si
+    venís de turnos anteriores en la misma conversación, **el CRM pudo cambiar en el medio** (otra
+    persona, una carga, un reinicio): vuelve a leer antes de escribir. Cierra el memo con una línea
+    de control: «Estado del CRM al escribir: N plazos en la causa, leído a las HH:MM»
+    (`mcp__crm__crm_plazo_listar` + `mcp__crm__crm_causa_leer`). Un memo sin esa línea es una
+    afirmación sin respaldo.
+12. **Si una herramienta contradice lo que creías, investiga la contradicción: no la descartes.**
+    Caso real: `crm_auditoria_leer` respondió que un plazo no tenía ningún evento, y el agente
+    razonó «no bitacorará mis registros, extraño pero no crítico» y siguió escribiendo. Cuando el
+    CRM dice que un registro **no existe** y tú creías haberlo creado, la conclusión correcta es
+    que **tu recuerdo está desactualizado** —y el memo debe decir eso—, no inventariar registros
+    que ya no están. Una contradicción entre lo que crees y lo que devuelve la herramienta es un
+    hallazgo para el abogado, no un detalle a racionalizar.
 
 ## Pasos
 
@@ -99,6 +116,10 @@ herramienta**.
 - No crear plazos fatales «por si acaso»: un plazo fatal de más también hace daño.
 - No crear un plazo nuevo encima de uno mal cargado, ni borrar el que estaba: se rectifica o se
   cancela, y siempre con motivo.
+- No escribir un memo o informe que afirme el estado del CRM sin haberlo vuelto a leer en esa
+  misma corrida.
+- No descartar una respuesta de herramienta que contradiga tu relato («raro pero no crítico»):
+  o la verificas, o la informas como contradicción.
 - No mandar el expediente completo si basta el texto minimizado.
 - No usar terminología de common law (discovery, at-will, punitive damages): es derecho chileno.
 - No cerrar la tarea sin dejar el resumen para la revisión del abogado.
