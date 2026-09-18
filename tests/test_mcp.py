@@ -7,6 +7,7 @@ internas estén bien.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -222,21 +223,41 @@ class TestHerramientas(BaseMCP):
 class TestServidorRealPorStdio(BaseMCP):
     def test_handshake_y_creacion_de_plazo(self):
         """Arranca `openlegal mcp` de verdad y le habla como le hablaría el agente."""
+        # El entorno del padre, como lo pasa el harness: ambiente heredado y sólo las
+        # variables del MCP por encima. Antes acá se armaba un entorno MÍNIMO con un PATH
+        # de Linux, y en Windows el hijo no arrancaba (la prueba fallaba sólo en 3.10 con
+        # un JSON vacío, sin decir por qué).
         entorno = {
+            **os.environ,
             "OPENLEGAL_MCP_DB": self.url,
             "OPENLEGAL_MCP_USUARIO": "socia@mcp.cl",
-            "PATH": "/usr/bin:/bin",
+            "PYTHONPATH": str(RAIZ / "src"),
+            # El servidor imprime español: sin esto, en Windows la salida va en cp1252.
+            "PYTHONIOENCODING": "utf-8",
         }
         proceso = subprocess.Popen(
             [sys.executable, "-m", "openlegal.cli", "mcp"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, cwd=RAIZ, env={**entorno, "PYTHONPATH": str(RAIZ / "src")},
+            text=True, cwd=RAIZ, env=entorno,
         )
         try:
+            entrada, salida, errores = proceso.stdin, proceso.stdout, proceso.stderr
+            assert entrada is not None and salida is not None and errores is not None
+
             def pedir(solicitud: dict) -> dict:
-                proceso.stdin.write(json.dumps(solicitud) + "\n")
-                proceso.stdin.flush()
-                return json.loads(proceso.stdout.readline())
+                entrada.write(json.dumps(solicitud) + "\n")
+                entrada.flush()
+                linea = salida.readline()
+                if not linea:
+                    # Sin salida: lo más probable es que el hijo no haya arrancado. Hay
+                    # que decir por qué en vez de morir con un JSON vacío.
+                    codigo = proceso.poll()
+                    detalle = errores.read() if codigo is not None else "(sigue vivo)"
+                    raise AssertionError(
+                        f"el servidor MCP no respondió (código de salida: {codigo}); "
+                        f"stderr del hijo:\n{detalle}"
+                    )
+                return json.loads(linea)
 
             inicio = pedir({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
             self.assertEqual(inicio["result"]["serverInfo"]["name"], "open-legal-harness")
