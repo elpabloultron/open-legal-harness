@@ -536,12 +536,18 @@ class TestElTokenDelPanelSeDejaAnotado(unittest.TestCase):
     def test_si_no_se_puede_escribir_el_servidor_igual_arranca(self):
         from openlegal.cli import _guardar_token
 
-        previo = os.environ.get("OPENLEGAL_TOKEN_FILE")
-        os.environ["OPENLEGAL_TOKEN_FILE"] = "/proc/inexistente/token.txt"
-        try:
-            self.assertIsNone(_guardar_token("token-de-prueba"))
-        finally:
-            if previo is None:
-                os.environ.pop("OPENLEGAL_TOKEN_FILE", None)
-            else:
-                os.environ["OPENLEGAL_TOKEN_FILE"] = previo
+        # El caso «no se puede escribir» tiene que ser imposible en cualquier sistema: un
+        # archivo donde el camino pide un directorio falla igual en Linux y en Windows. Con
+        # /proc/inexistente no servía: en Windows eso se crea y la escritura anda.
+        with tempfile.TemporaryDirectory() as tmp:
+            estorbo = pathlib.Path(tmp) / "soy-un-archivo"
+            estorbo.write_text("no soy un directorio", encoding="utf-8")
+            previo = os.environ.get("OPENLEGAL_TOKEN_FILE")
+            os.environ["OPENLEGAL_TOKEN_FILE"] = str(estorbo / "token.txt")
+            try:
+                self.assertIsNone(_guardar_token("token-de-prueba"))
+            finally:
+                if previo is None:
+                    os.environ.pop("OPENLEGAL_TOKEN_FILE", None)
+                else:
+                    os.environ["OPENLEGAL_TOKEN_FILE"] = previo
