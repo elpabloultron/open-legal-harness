@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import stat
 import sys
 import tempfile
 import unittest
@@ -461,3 +462,86 @@ class TestModulosDelDia(BasePanel):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestElPanelSePuedeLlamarDesdeElHarness(BasePanel):
+    """El sidebar del harness corre en otro puerto (8801) y llama a este servidor (8899).
+
+    Sin CORS el navegador bloquea la respuesta: la petición llega, el servidor contesta 200, y
+    aun así el JavaScript no ve nada. El síntoma que ve el usuario es «no responde el servicio
+    del CRM» con el CRM perfectamente levantado. Ninguna prueba con `curl` lo detecta —por eso
+    el panel distingue «sin servicio» de «token malo» y por eso esto se prueba desde el
+    navegador.
+    """
+
+    ORIGEN = "http://127.0.0.1:8801"
+
+    def test_el_preflight_desde_el_harness_se_contesta(self):
+        respuesta = self.cliente_http.options(
+            "/api/estado",
+            headers={
+                "Origin": self.ORIGEN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "x-openlegal-token",
+            },
+        )
+        self.assertIn(respuesta.status_code, (200, 204), respuesta.text)
+        self.assertEqual(respuesta.headers.get("access-control-allow-origin"), self.ORIGEN)
+        self.assertIn(
+            "x-openlegal-token",
+            respuesta.headers.get("access-control-allow-headers", "").lower(),
+        )
+
+    def test_la_respuesta_trae_la_cabecera_del_origen(self):
+        respuesta = self.cliente_http.get(
+            "/api/estado", headers={"Origin": self.ORIGEN, "X-OpenLegal-Token": "token-de-prueba"}
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.headers.get("access-control-allow-origin"), self.ORIGEN)
+
+    def test_una_pagina_ajena_no_recibe_permiso(self):
+        respuesta = self.cliente_http.get("/api/estado", headers={"Origin": "https://sitio-ajeno.cl"})
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIsNone(respuesta.headers.get("access-control-allow-origin"))
+
+
+class TestElTokenDelPanelSeDejaAnotado(unittest.TestCase):
+    """`openlegal serve` dice su dirección y deja el token anotado.
+
+    El token es la llave del panel (con él se ve el estudio entero), así que va a un archivo
+    con permiso 600 y sólo cuando lo generó el servidor: si lo eligió quien lo arrancó, ya
+    sabe cuál es. Esto nació de una tarde perdida buscando el token para conectar el panel del
+    harness.
+    """
+
+    def test_el_token_queda_en_un_archivo_privado(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            destino = pathlib.Path(tmp) / "config" / "token.txt"
+            previo = os.environ.get("OPENLEGAL_TOKEN_FILE")
+            os.environ["OPENLEGAL_TOKEN_FILE"] = str(destino)
+            try:
+                from openlegal.cli import _guardar_token, _ruta_token
+
+                self.assertEqual(_ruta_token(), destino)
+                self.assertEqual(_guardar_token("token-de-prueba"), destino)
+                self.assertEqual(destino.read_text(encoding="utf-8"), "token-de-prueba")
+                if os.name != "nt":  # en Windows los permisos son otra cosa
+                    self.assertEqual(stat.S_IMODE(destino.stat().st_mode), 0o600)
+            finally:
+                if previo is None:
+                    os.environ.pop("OPENLEGAL_TOKEN_FILE", None)
+                else:
+                    os.environ["OPENLEGAL_TOKEN_FILE"] = previo
+
+    def test_si_no_se_puede_escribir_el_servidor_igual_arranca(self):
+        from openlegal.cli import _guardar_token
+
+        previo = os.environ.get("OPENLEGAL_TOKEN_FILE")
+        os.environ["OPENLEGAL_TOKEN_FILE"] = "/proc/inexistente/token.txt"
+        try:
+            self.assertIsNone(_guardar_token("token-de-prueba"))
+        finally:
+            if previo is None:
+                os.environ.pop("OPENLEGAL_TOKEN_FILE", None)
+            else:
+                os.environ["OPENLEGAL_TOKEN_FILE"] = previo

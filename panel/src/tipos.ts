@@ -102,6 +102,69 @@ export interface CuentaSeguridad {
   bloqueo?: { bloqueada: boolean; faltan_minutos: number; intentos: number };
 }
 
+/* ---------------------------------------------- honorarios y cuenta de la causa */
+
+export interface Honorario {
+  id: number;
+  causa_id: number;
+  /** fijo | hora | cuota_litis | mixto */
+  modalidad: string;
+  monto_pactado: number | null;
+  monto_bruto: number | null;
+  /** La retención que declaró el estudio; null = no la declaró (y el líquido es el bruto). */
+  retencion_sii: number | null;
+  monto_liquido: number | null;
+  monto_pagado: number;
+  /** pendiente | parcial | pagado */
+  estado_pago: string;
+  descripcion: string | null;
+  fecha: string | null;
+}
+
+export interface Gasto {
+  id: number;
+  causa_id: number;
+  concepto: string;
+  monto: number;
+  /** 1 = lo adelantó el estudio y se le cuenta al cliente; 0 = lo pagó el cliente. */
+  pagado_por_estudio: number;
+  reembolsado: number;
+  fecha: string | null;
+  comprobante: string | null;
+}
+
+export interface Pago {
+  id: number;
+  causa_id: number;
+  honorario_id: number | null;
+  fecha: string;
+  monto: number;
+  medio: string;
+  referencia: string | null;
+  nota: string | null;
+  registrado_por_nombre?: string | null;
+}
+
+export interface CuentaDividendos {
+  estudio: { nombre: string | null; rut: string | null };
+  cliente: { nombre: string | null; rut: string | null; direccion: string | null } | null;
+  causa: { id: number; caratula: string | null; rol_rit: string | null; tribunal: string | null };
+  honorarios: Honorario[];
+  gastos: Gasto[];
+  pagos: Pago[];
+  totales: {
+    honorarios_pactado: number;
+    honorarios_liquido: number;
+    honorarios_pagado: number;
+    gastos: number;
+    gastos_por_cuenta_del_cliente: number;
+    pagos: number;
+    saldo: number;
+  };
+  advertencias: string[];
+  generado_en: string;
+}
+
 /** Qué permiso del servidor pide cada recurso y cada acción del panel. */
 export const PERMISOS: Record<string, Record<string, string>> = {
   causas: { list: "causa.leer", create: "causa.crear" },
@@ -114,6 +177,13 @@ export const PERMISOS: Record<string, Record<string, string>> = {
   retencion: { list: "usuario.gestionar" },
   titulares: { list: "titular.gestionar" },
   panel: { list: "reporte.panel" },
+  // Los honorarios se leen con `honorario.leer` (y su `.todas` para el socio); darlos de alta
+  // es `honorario.editar`, que es el permiso de finanzas. Los gastos van por su propio permiso,
+  // y los pagos son plata de honorarios: los registra quien puede editar honorarios.
+  honorarios: { list: "honorario.leer", create: "honorario.editar" },
+  gastos: { list: "gasto.leer", create: "gasto.editar" },
+  pagos: { list: "honorario.leer", create: "honorario.editar" },
+  cuenta: { list: "honorario.leer" },
 };
 
 export function permisoDe(recurso: string, accion: string): string | undefined {
@@ -129,4 +199,12 @@ export function fechaLegible(iso?: string | null): string {
 export function sellosLegibles(iso?: string | null): string {
   if (!iso) return "—";
   return `${fechaLegible(iso)} ${String(iso).slice(11, 16)}`;
+}
+
+/** Montos en pesos, como se escriben acá: $350.000. Sin dato no es cero, es «—». */
+export function clp(valor?: number | null): string {
+  if (valor === null || valor === undefined) return "—";
+  const numero = Math.round(valor);
+  const signo = numero < 0 ? "-" : "";
+  return `${signo}$${String(Math.abs(numero)).replace(/\B(?=(\d{3})+(?!\d))/g, ".")}`;
 }

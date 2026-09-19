@@ -122,6 +122,8 @@ CREATE TABLE IF NOT EXISTS honorarios (
     monto_liquido  INTEGER,
     monto_pagado   INTEGER NOT NULL DEFAULT 0,
     estado_pago    TEXT NOT NULL DEFAULT 'pendiente',
+    descripcion    TEXT,                            -- que se pacto, en palabras
+    fecha          TEXT,                            -- desde cuando rige el pacto
     creado_en      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -133,8 +135,25 @@ CREATE TABLE IF NOT EXISTS gastos (
     pagado_por_estudio   INTEGER NOT NULL DEFAULT 1,
     reembolsado          INTEGER NOT NULL DEFAULT 0,
     fecha                TEXT,
+    comprobante          TEXT,                      -- boleta, factura o recibo que lo respalda
     creado_en            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Cada abono del cliente, con su medio y su referencia: es lo que permite
+-- reconstruir el saldo de una causa sin adivinar de donde salio la plata.
+CREATE TABLE IF NOT EXISTS pagos (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    causa_id       INTEGER NOT NULL REFERENCES causas(id) ON DELETE CASCADE,
+    honorario_id   INTEGER REFERENCES honorarios(id),
+    fecha          TEXT NOT NULL,
+    monto          INTEGER NOT NULL,
+    medio          TEXT NOT NULL DEFAULT 'transferencia',   -- transferencia|efectivo|cheque|tarjeta|otro
+    referencia     TEXT,
+    nota           TEXT,
+    registrado_por INTEGER REFERENCES usuarios(id),
+    creado_en      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 
 -- Bitacora: quien hizo que y cuando. Requisito de cualquier oficina.
 CREATE TABLE IF NOT EXISTS auditoria (
@@ -183,6 +202,7 @@ CREATE TABLE IF NOT EXISTS transferencias_ia (
 );
 
 CREATE INDEX IF NOT EXISTS idx_plazos_vencimiento ON plazos (fecha_vencimiento, estado);
+CREATE INDEX IF NOT EXISTS idx_pagos_causa       ON pagos (causa_id, fecha);
 CREATE INDEX IF NOT EXISTS idx_audiencias_fecha  ON audiencias (fecha);
 CREATE INDEX IF NOT EXISTS idx_auditoria_estudio ON auditoria (estudio_id, creado_en);
 CREATE INDEX IF NOT EXISTS idx_transferencias_causa ON transferencias_ia (causa_id, creado_en);

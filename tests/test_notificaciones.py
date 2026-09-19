@@ -112,7 +112,11 @@ class TestMigracion(BaseConEstudio):
     def test_la_migracion_trae_la_cola_y_el_telefono(self):
         self.assertIn("notificaciones", self.db.tablas())
         self.assertIn("telefono", self.db.columnas("usuarios"))
-        self.assertEqual([n for n, _, _ in MIGRACIONES], [1, 2, 3, 4, 5])
+        # Las migraciones se numeran y se aplican en orden: eso es lo que se fija acá, no
+        # cuántas hay (agregar la 6 no puede romper esta prueba).
+        versiones = [n for n, _, _ in MIGRACIONES]
+        self.assertEqual(versiones, list(range(1, len(versiones) + 1)))
+        self.assertIn(5, versiones)
         self.assertIn(5, self.db.migraciones_aplicadas())
 
 

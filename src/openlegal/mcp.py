@@ -35,7 +35,7 @@ import os
 import sys
 from typing import Any
 
-from . import auth, ia, plazos, seguridad, service
+from . import auth, honorarios, ia, plazos, seguridad, service
 from .db import DB
 
 PROTOCOLO = "2026-07-28"
@@ -495,6 +495,109 @@ HERRAMIENTAS: list[dict[str, Any]] = [
             "required": ["causa_id", "proveedor", "texto"],
         },
     },
+    {
+        "name": "crm_honorario_registrar",
+        "description": (
+            "Registra un honorario pactado en una causa. Los montos son enteros en CLP, sin "
+            "puntos ni decimales (350000 son $350.000). La retención NO la calcula el CRM ni la "
+            "inventes: es un dato que el estudio copia de su boleta y va en 'retencion_sii'. Si "
+            "no la tienes, omítela y el líquido quedará igual al bruto — la cuenta de dividendos "
+            "lo dirá por escrito, así que avísale al abogado. No hay integración con el SII ni "
+            "emisión de boletas: el CRM registra lo que el estudio declara."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "causa_id": {"type": "integer"},
+                "modalidad": {
+                    "type": "string",
+                    "enum": list(honorarios.MODALIDADES),
+                    "default": "fijo",
+                    "description": "fijo, por hora, cuota litis o mixto",
+                },
+                "monto_pactado": {"type": "integer", "description": "lo acordado con el cliente, en CLP enteros"},
+                "descripcion": {"type": "string", "description": "qué se pactó, en palabras (por ejemplo 'Demanda civil, primera instancia')"},
+                "fecha": {"type": "string", "description": "desde cuándo rige el pacto: YYYY-MM-DD (por defecto hoy)"},
+                "monto_bruto": {"type": "integer", "description": "monto bruto de la boleta del estudio, en CLP enteros"},
+                "retencion_sii": {
+                    "type": "integer",
+                    "description": "retención que el estudio copia de su boleta, en CLP enteros (no la calcules)",
+                },
+            },
+            "required": ["causa_id"],
+        },
+    },
+    {
+        "name": "crm_gasto_registrar",
+        "description": (
+            "Registra un gasto de la causa (notaría, receptor, tasas, peritaje) que adelantó el "
+            "estudio y que después se le pasa al cliente en la cuenta de dividendos. El monto es "
+            "un entero en CLP (25000 son $25.000). Si el gasto lo pagó el cliente, pásalo en "
+            "'pagado_por_estudio': false para que no engorde lo que se le cobra. Guarda el "
+            "respaldo en 'comprobante' (boleta, factura, recibo): un gasto sin respaldo es difícil "
+            "de sostener frente al cliente, y el CRM no lo completa por su cuenta."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "causa_id": {"type": "integer"},
+                "concepto": {"type": "string", "description": "qué se pagó (por ejemplo 'Notaría 45, autorización de firma')"},
+                "monto": {"type": "integer", "description": "CLP enteros, mayor que 0"},
+                "fecha": {"type": "string", "description": "YYYY-MM-DD (por defecto hoy)"},
+                "comprobante": {"type": "string", "description": "boleta, factura o recibo que respalda el gasto"},
+                "pagado_por_estudio": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "true = lo adelantó el estudio y se le cuenta al cliente; false = lo pagó el cliente",
+                },
+            },
+            "required": ["causa_id", "concepto", "monto"],
+        },
+    },
+    {
+        "name": "crm_pago_registrar",
+        "description": (
+            "Registra un abono del cliente en una causa. El monto va en CLP enteros (200000 son "
+            "$200.000). Registrar un pago es un acto con consecuencias: baja lo que el cliente "
+            "debe, queda en su cuenta y en la bitácora con tu nombre — confirma el monto y la "
+            "fecha con quien te lo pidió (o contra el comprobante) antes de escribirlo, y no "
+            "redondees ni completes nada por tu cuenta. Con 'honorario_id' el pago queda imputado "
+            "a ese honorario y el CRM recalcula si quedó parcial o pagado; el honorario tiene que "
+            "ser de ESTA causa (si es de otra, la herramienta lo rechaza)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "causa_id": {"type": "integer"},
+                "monto": {"type": "integer", "description": "CLP enteros, mayor que 0"},
+                "fecha": {"type": "string", "description": "la del comprobante: YYYY-MM-DD (por defecto hoy)"},
+                "medio": {
+                    "type": "string",
+                    "enum": list(honorarios.MEDIOS),
+                    "default": "transferencia",
+                },
+                "referencia": {"type": "string", "description": "n° de transferencia, cheque o comprobante"},
+                "nota": {"type": "string"},
+                "honorario_id": {"type": "integer", "description": "honorario de esta causa al que se imputa el pago"},
+            },
+            "required": ["causa_id", "monto"],
+        },
+    },
+    {
+        "name": "crm_cuenta_dividendos",
+        "description": (
+            "Lee la cuenta de dividendos de una causa: honorarios pactados y líquidos, gastos, "
+            "pagos recibidos, saldo y advertencias. Es de sólo lectura. Los montos vienen en CLP "
+            "enteros. El saldo es honorarios líquidos + gastos por cuenta del cliente - pagos. Si "
+            "un honorario no tiene retención declarada, la cuenta lo advierte: no supongas la "
+            "tasa ni completes el dato. Esta cuenta no es un documento tributario."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"causa_id": {"type": "integer"}},
+            "required": ["causa_id"],
+        },
+    },
 ]
 
 
@@ -919,6 +1022,110 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
             documentos=argumentos.get("documentos"), redactado=bool(argumentos.get("redactado", False)),
         )
         return registro
+
+    if nombre == "crm_honorario_registrar":
+        modalidad = str(argumentos.get("modalidad") or "fijo").strip().lower()
+        if modalidad not in honorarios.MODALIDADES:
+            raise ErrorArgumento(
+                f"'modalidad' tiene que ser una de {', '.join(honorarios.MODALIDADES)}; llegó: {modalidad!r}"
+            )
+        pactado = argumentos.get("monto_pactado")
+        bruto = argumentos.get("monto_bruto")
+        retencion = argumentos.get("retencion_sii")
+        if pactado is None and bruto is None:
+            raise ErrorArgumento(
+                "'monto_pactado' o 'monto_bruto' son obligatorios: sin monto no hay honorario que registrar. "
+                "Los montos son enteros en CLP, sin puntos ni decimales (350000 son $350.000)."
+            )
+        honorario_id = honorarios.registrar_honorario(
+            db,
+            usuario,
+            entero(argumentos.get("causa_id"), "causa_id", minimo=1),
+            modalidad,
+            monto_pactado=entero(pactado, "monto_pactado", minimo=0) if pactado is not None else None,
+            descripcion=(argumentos.get("descripcion") or "").strip() or None,
+            fecha=fecha_iso(argumentos["fecha"], "fecha").isoformat() if argumentos.get("fecha") else None,
+            monto_bruto=entero(bruto, "monto_bruto", minimo=0) if bruto is not None else None,
+            retencion_sii=entero(retencion, "retencion_sii", minimo=0) if retencion is not None else None,
+        )
+        fila = db.uno("SELECT * FROM honorarios WHERE id = ?", (honorario_id,)) or {}
+        aviso = None
+        if fila.get("monto_bruto") is not None and fila.get("retencion_sii") is None:
+            # El CRM no puede saber si el honorario no está afecto a retención o si falta el dato:
+            # lo dice y lo deja anotado, que es lo único honesto que puede hacer.
+            aviso = (
+                "el líquido quedó igual al bruto porque no se declaró retención. La tasa es un dato del estudio "
+                "(sale de su boleta): pregúntala y regístrala en 'retencion_sii' junto con el bruto antes de dar "
+                "el líquido por bueno; mientras tanto la cuenta de dividendos lo está advirtiendo por escrito."
+            )
+        return {"honorario_id": honorario_id, "honorario": fila, "aviso": aviso}
+
+    if nombre == "crm_gasto_registrar":
+        concepto = str(argumentos.get("concepto") or "").strip()
+        if not concepto:
+            raise ErrorArgumento(
+                "'concepto' no puede ir vacío: di qué se pagó (notaría, receptor, tasas, peritaje). Ese texto es "
+                "el que el cliente va a leer en su cuenta de dividendos."
+            )
+        gasto_id = honorarios.registrar_gasto(
+            db,
+            usuario,
+            entero(argumentos.get("causa_id"), "causa_id", minimo=1),
+            concepto,
+            entero(argumentos.get("monto"), "monto", minimo=1),
+            fecha=fecha_iso(argumentos["fecha"], "fecha").isoformat() if argumentos.get("fecha") else None,
+            comprobante=(argumentos.get("comprobante") or "").strip() or None,
+            pagado_por_estudio=bool(argumentos.get("pagado_por_estudio", True)),
+        )
+        fila = db.uno("SELECT * FROM gastos WHERE id = ?", (gasto_id,)) or {}
+        return {
+            "gasto_id": gasto_id,
+            "gasto": fila,
+            "aviso": None if fila.get("comprobante") else
+            "el gasto quedó sin comprobante. Anota el respaldo cuando lo tengas: un gasto sin "
+            "respaldo es difícil de sostener frente al cliente.",
+        }
+
+    if nombre == "crm_pago_registrar":
+        monto = entero(argumentos.get("monto"), "monto", minimo=1)
+        medio = str(argumentos.get("medio") or "transferencia").strip().lower()
+        if medio not in honorarios.MEDIOS:
+            raise ErrorArgumento(
+                f"'medio' tiene que ser uno de {', '.join(honorarios.MEDIOS)}; llegó: {medio!r}"
+            )
+        causa_id = entero(argumentos.get("causa_id"), "causa_id", minimo=1)
+        honorario_pedido = argumentos.get("honorario_id")
+        pago_id = honorarios.registrar_pago(
+            db,
+            usuario,
+            causa_id,
+            monto,
+            fecha=fecha_iso(argumentos["fecha"], "fecha").isoformat() if argumentos.get("fecha") else None,
+            medio=medio,
+            referencia=(argumentos.get("referencia") or "").strip() or None,
+            nota=(argumentos.get("nota") or "").strip() or None,
+            honorario_id=entero(honorario_pedido, "honorario_id", minimo=1) if honorario_pedido is not None else None,
+        )
+        respuesta: dict[str, Any] = {
+            "pago_id": pago_id,
+            "causa_id": causa_id,
+            "monto": monto,
+            "registrado_por": usuario["nombre"],
+            "recordatorio": (
+                "el abono quedó en la cuenta del cliente y en la bitácora. Si el monto o la fecha no calzan con el "
+                "comprobante, no se corrige borrando: avísale al estudio para que lo rectifique con otro registro."
+            ),
+        }
+        if honorario_pedido is not None:
+            respuesta["honorario"] = honorarios.recalcular_honorario(db, int(honorario_pedido))
+            try:
+                respuesta["saldo_de_la_causa"] = honorarios.cuenta(db, usuario, causa_id)["totales"]["saldo"]
+            except auth.ErrorPermiso:  # un rol que registra pagos pero no lee la cuenta
+                respuesta["saldo_de_la_causa"] = None
+        return respuesta
+
+    if nombre == "crm_cuenta_dividendos":
+        return honorarios.cuenta(db, usuario, entero(argumentos.get("causa_id"), "causa_id", minimo=1))
 
     raise ValueError(f"herramienta desconocida: {nombre}")
 

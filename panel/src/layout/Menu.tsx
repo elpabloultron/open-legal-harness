@@ -15,6 +15,7 @@ import NotificationsIcon from "@mui/icons-material/NotificationsNoneOutlined";
 import ShieldIcon from "@mui/icons-material/ShieldOutlined";
 import HourglassIcon from "@mui/icons-material/HourglassEmptyOutlined";
 import FolderSharedIcon from "@mui/icons-material/FolderSharedOutlined";
+import PaymentsIcon from "@mui/icons-material/PaymentsOutlined";
 import { usePermissions } from "react-admin";
 
 interface Item {
@@ -30,6 +31,9 @@ const ITEMS: Item[] = [
   { name: "plazos", label: "Plazos", permiso: "plazo.leer", icono: <AssignmentLateIcon />, a: "/plazos" },
   { name: "audiencias", label: "Agenda", permiso: "audiencia.leer", icono: <EventIcon />, a: "/audiencias" },
   { name: "clientes", label: "Clientes", permiso: "cliente.leer", icono: <ContactPageIcon />, a: "/clientes" },
+  // Los honorarios se piden con `honorario.leer`; el socio además tiene `.leer.todas`, que el
+  // filtro de abajo ya contempla como el resto de los módulos.
+  { name: "honorarios", label: "Honorarios", permiso: "honorario.leer", icono: <PaymentsIcon />, a: "/honorarios" },
   { name: "avisos", label: "Avisos", permiso: "aviso.gestionar", icono: <NotificationsIcon />, a: "/avisos" },
   { name: "usuarios", label: "Usuarios", permiso: "usuario.gestionar", icono: <PeopleIcon />, a: "/usuarios" },
   { name: "seguridad", label: "Seguridad", permiso: "usuario.gestionar", icono: <ShieldIcon />, a: "/seguridad" },

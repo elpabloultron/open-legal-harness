@@ -351,10 +351,58 @@ def _migracion_5_notificaciones(db: DB) -> list[str]:
     return aplicadas
 
 
+def _migracion_6_honorarios_gastos_pagos(db: DB) -> list[str]:
+    """Migración 6: los pagos, y los datos que faltaban para poder rendir una cuenta.
+
+    Tres cosas, todas del mismo asunto —honorarios, gastos y lo que el cliente paga—:
+
+    - `pagos`: cada abono, con su medio, su referencia y quién lo registró. Sin esta
+      tabla la cuenta de una causa no se puede reconstruir: se sabría que alguien pagó,
+      nunca cuándo ni por qué canal.
+    - `honorarios.descripcion` y `honorarios.fecha`: qué se pactó, en palabras, y desde
+      cuándo rige. Un monto sin explicación en una cuenta de dividendos no se puede
+      defender frente al cliente.
+    - `gastos.comprobante`: el respaldo (boleta, factura, recibo) del gasto que se le
+      pasa al cliente.
+
+    La tasa de retención NO se guarda como regla en ninguna parte: es un dato que el
+    estudio copia de su boleta y llega como `retencion_sii`. El CRM no la calcula, no la
+    supone y no integra nada con el SII.
+    """
+    aplicadas = []
+    if "honorarios" in db.tablas():
+        for columna, tipo in (("descripcion", "TEXT"), ("fecha", "TEXT")):
+            if columna not in db.columnas("honorarios"):
+                db.ejecutar(f"ALTER TABLE honorarios ADD COLUMN {columna} {tipo}")
+                aplicadas.append(f"ALTER honorarios.{columna}")
+    if "gastos" in db.tablas() and "comprobante" not in db.columnas("gastos"):
+        db.ejecutar("ALTER TABLE gastos ADD COLUMN comprobante TEXT")
+        aplicadas.append("ALTER gastos.comprobante")
+    creada = "pagos" not in db.tablas()
+    db.ejecutar(
+        "CREATE TABLE IF NOT EXISTS pagos ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " causa_id INTEGER NOT NULL REFERENCES causas(id) ON DELETE CASCADE,"
+        " honorario_id INTEGER REFERENCES honorarios(id),"
+        " fecha TEXT NOT NULL,"
+        " monto INTEGER NOT NULL,"
+        " medio TEXT NOT NULL DEFAULT 'transferencia',"
+        " referencia TEXT,"
+        " nota TEXT,"
+        " registrado_por INTEGER REFERENCES usuarios(id),"
+        " creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    db.ejecutar("CREATE INDEX IF NOT EXISTS idx_pagos_causa ON pagos (causa_id, fecha)")
+    if creada:
+        aplicadas.append("CREATE pagos")
+    return aplicadas
+
+
 MIGRACIONES: list[tuple[int, str, Callable[[DB], list[str]]]] = [
     (1, "esquema_base", _migracion_1_esquema_base),
     (2, "documentos_integridad", _migracion_2_documentos_integridad),
     (3, "segundo_factor", _migracion_3_segundo_factor),
     (4, "retencion", _migracion_4_retencion),
     (5, "notificaciones", _migracion_5_notificaciones),
+    (6, "honorarios_gastos_pagos", _migracion_6_honorarios_gastos_pagos),
 ]

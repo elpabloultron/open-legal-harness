@@ -103,6 +103,35 @@ class TestMigracionesVersionadas(BaseMigrable):
         assert causa is not None
         self.assertEqual(causa["caratula"], "Muñoz con Banco del Sur")
 
+    def test_la_migracion_6_trae_los_pagos_y_las_columnas_que_faltaban(self):
+        self.db.migrar()
+
+        self.assertIn("pagos", self.db.tablas())
+        self.assertIn(6, self.db.migraciones_aplicadas())
+        for columna in ("descripcion", "fecha"):
+            self.assertIn(columna, self.db.columnas("honorarios"))
+        self.assertIn("comprobante", self.db.columnas("gastos"))
+
+    def test_una_base_sin_pagos_se_actualiza_sin_perder_nada(self):
+        """El caso real: la base de un estudio que ya venía usándose antes de que hubiera pagos."""
+        self._estudio_con_equipo()
+        self.db.ejecutar("DROP TABLE pagos")
+        self.db.ejecutar("DELETE FROM migraciones WHERE version = 6")
+
+        aplicadas = self.db.migrar()
+
+        self.assertIn("CREATE pagos", aplicadas)
+        self.assertIn("pagos", self.db.tablas())
+        self.assertNotIn(6, [version for version, _ in self.db.migraciones_pendientes()])
+        # Los datos que ya estaban siguen ahí: una migración no toca expedientes.
+        cliente = self.db.uno("SELECT nombre FROM clientes WHERE id = ?", (self.cliente_id,))
+        assert cliente is not None
+        self.assertEqual(cliente["nombre"], "Rosa Elena Muñoz")
+
+    def test_migrar_otra_vez_no_repite_la_migracion_6(self):
+        self.db.migrar()
+        self.assertEqual(self.db.migrar(), [], "una base al día no se vuelve a tocar")
+
 
 class TestIntegridadDeDocumentos(BaseMigrable):
     def setUp(self):

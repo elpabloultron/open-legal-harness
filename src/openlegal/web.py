@@ -40,6 +40,8 @@ Módulos (lo mismo que la terminal, sin terminal):
              POST /api/seguridad/2fa/preparar | /confirmar | /apagar
   Retención  GET  /api/retencion       POST /api/retencion       POST /api/retencion/ejecutar
   Titulares  GET  /api/titulares       POST /api/titulares/exportar | /anonimizar
+  Honorarios GET  /api/cuenta?causa=N  cuenta de dividendos (formato=html: imprimible)
+             POST /api/honorarios       POST /api/gastos        POST /api/pagos
 
 Los errores del dominio salen con su código: 400 lo que se puede corregir, 401 lo que pide
 entrar de nuevo, 403 lo que no le toca a ese rol, 429 la cuenta bloqueada por intentos
@@ -56,11 +58,22 @@ import tempfile
 from collections.abc import Iterator
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, auth, notificaciones, plazos, retencion, seguridad, service, titulares
+from . import (
+    __version__,
+    auth,
+    honorarios,
+    notificaciones,
+    plazos,
+    retencion,
+    seguridad,
+    service,
+    titulares,
+)
 from .db import DB
 
 ESTATICOS = pathlib.Path(__file__).resolve().parent / "static"
@@ -111,6 +124,37 @@ class NuevaAudiencia(BaseModel):
     lugar_o_url: str | None = None
     minuta: str | None = None
     responsable_id: int | None = None
+
+
+class NuevoHonorario(BaseModel):
+    """Montos en CLP enteros. La retención la declara el estudio, no el CRM."""
+
+    causa_id: int
+    modalidad: str = "fijo"
+    monto_pactado: int | None = None
+    descripcion: str | None = None
+    fecha: str | None = None
+    monto_bruto: int | None = None
+    retencion_sii: int | None = None
+
+
+class NuevoGasto(BaseModel):
+    causa_id: int
+    concepto: str
+    monto: int
+    fecha: str | None = None
+    comprobante: str | None = None
+    pagado_por_estudio: bool = True
+
+
+class NuevoPago(BaseModel):
+    causa_id: int
+    monto: int
+    fecha: str | None = None
+    medio: str = "transferencia"
+    referencia: str | None = None
+    nota: str | None = None
+    honorario_id: int | None = None
 
 
 class ConfigAvisos(BaseModel):
@@ -189,6 +233,29 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
     app = FastAPI(title="Open Legal Harness", docs_url=None, redoc_url=None)
     app.state.db_url = db_url or os.environ.get("LEGALCRM_DB_URL")
     app.state.token = token or os.environ.get("OPENLEGAL_PANEL_TOKEN") or secrets.token_urlsafe(24)
+
+    # CORS: el panel del harness vive en otro puerto (8801) y llama a este servidor (8899).
+    # Sin estas cabeceras el navegador bloquea la respuesta: la petición llega, el servidor
+    # contesta 200, y aun así el JavaScript no ve nada. El síntoma es «no responde el
+    # servicio del CRM» con el CRM perfectamente levantado, y a un `curl` no le pasa nunca
+    # —por eso esto se descubre con el navegador y no con la terminal—.
+    #
+    # Se permite sólo el loopback (esta máquina, cualquier puerto): la única página que tiene
+    # por qué llamar al CRM es la que se sirve acá (el panel embebido y el harness). Igual
+    # haría falta el token, pero no hay razón para darle el primer paso a nadie más. Si algún
+    # día el harness corre en otro equipo, su origen se agrega en OPENLEGAL_ORIGENES.
+    patron_origenes = r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$"
+    origen_extra = os.environ.get("OPENLEGAL_ORIGENES", "").strip()
+    if origen_extra:
+        patron_origenes = f"(?:{patron_origenes})|(?:{origen_extra})"
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=patron_origenes,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "X-OpenLegal-Token"],
+        max_age=600,
+    )
 
     # --------------------------------------------------------------- helpers
     def abrir_db() -> DB:
@@ -687,6 +754,53 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
             responsable_id=datos.responsable_id,
         )
         return {"id": identificador}
+
+    # ------------------------------------------- honorarios, gastos y pagos
+    # La cuenta de dividendos del estudio: lo que se pactó, lo que se gastó y lo que el
+    # cliente abonó. El panel muestra esa cuenta y da de alta registros; el HTML imprimible
+    # sale por la misma ruta (`formato=html`) y viaja con la sesión por cookie, así que el
+    # navegador lo abre en otra pestaña y lo imprime sin que haya tokens en JavaScript.
+    @app.get("/api/cuenta")
+    def api_cuenta(causa: int, formato: str = "json", ctx: dict = Depends(contexto_peticion)):
+        datos = honorarios.cuenta(ctx["db"], ctx["usuario"], causa)
+        if formato == "html":
+            return HTMLResponse(honorarios.html_cuenta(datos))
+        return datos
+
+    @app.post("/api/honorarios")
+    def api_crear_honorario(datos: NuevoHonorario, ctx: dict = Depends(contexto_peticion)):
+        honorario_id = honorarios.registrar_honorario(
+            ctx["db"], ctx["usuario"], datos.causa_id, datos.modalidad,
+            monto_pactado=datos.monto_pactado, descripcion=datos.descripcion, fecha=datos.fecha,
+            monto_bruto=datos.monto_bruto, retencion_sii=datos.retencion_sii,
+        )
+        fila = ctx["db"].uno("SELECT * FROM honorarios WHERE id = ?", (honorario_id,))
+        sin_retencion = bool(fila) and fila.get("monto_bruto") is not None and fila.get("retencion_sii") is None
+        return {
+            "id": honorario_id,
+            "honorario": fila,
+            "aviso": honorarios.ADVERTENCIA_SIN_RETENCION_DE_UNO if sin_retencion else None,
+        }
+
+    @app.post("/api/gastos")
+    def api_crear_gasto(datos: NuevoGasto, ctx: dict = Depends(contexto_peticion)):
+        gasto_id = honorarios.registrar_gasto(
+            ctx["db"], ctx["usuario"], datos.causa_id, datos.concepto, datos.monto,
+            fecha=datos.fecha, comprobante=datos.comprobante, pagado_por_estudio=datos.pagado_por_estudio,
+        )
+        return {"id": gasto_id, "gasto": ctx["db"].uno("SELECT * FROM gastos WHERE id = ?", (gasto_id,))}
+
+    @app.post("/api/pagos")
+    def api_crear_pago(datos: NuevoPago, ctx: dict = Depends(contexto_peticion)):
+        pago_id = honorarios.registrar_pago(
+            ctx["db"], ctx["usuario"], datos.causa_id, datos.monto, fecha=datos.fecha,
+            medio=datos.medio, referencia=datos.referencia, nota=datos.nota,
+            honorario_id=datos.honorario_id,
+        )
+        respuesta: dict[str, object] = {"id": pago_id}
+        if datos.honorario_id:
+            respuesta["honorario"] = honorarios.recalcular_honorario(ctx["db"], datos.honorario_id)
+        return respuesta
 
     # ---------------------------------------------------- derechos del titular
     @app.get("/api/titulares")

@@ -7,6 +7,10 @@
   openlegal causa crear --caratula "Perez con Andes SpA" --materia laboral
   openlegal causa asignar --causa 1 --usuario 2 --rol-en-causa colaborador
   openlegal plazo crear --causa 1 --descripcion "Contestar demanda" --dias 8 --notificacion 2026-09-17
+  openlegal honorario crear --causa 1 --modalidad fijo --monto 350000 --bruto 350000 --retencion 35000
+  openlegal gasto crear --causa 1 --concepto "Notaría" --monto 25000 --comprobante "boleta 45"
+  openlegal pago crear --causa 1 --monto 200000 --honorario 1 --referencia "transferencia 8812"
+  openlegal cuenta --causa 1 --html cuenta.html       # cuenta de dividendos (A4, imprimible)
   openlegal vencimientos --dias 30
   openlegal agenda --dias 15
   openlegal panel
@@ -20,11 +24,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import getpass
+import os
 import pathlib
 import sys
 from typing import NoReturn
 
-from . import auth, ia, notificaciones, plazos, retencion, seguridad, service, titulares
+from . import auth, honorarios, ia, notificaciones, plazos, retencion, seguridad, service, titulares
 from .db import DB, MIGRACIONES
 
 
@@ -436,6 +441,184 @@ def cmd_audiencia_crear(args) -> None:
     print(f"audiencia {audiencia_id} creada: {args.tipo} {args.fecha} {args.hora or ''}".strip())
 
 
+# ------------------------------------------------ honorarios, gastos y pagos
+# El circuito de la plata del estudio: lo que se pacta, lo que se gasta y lo que el
+# cliente abona. Los montos son CLP enteros y las tasas las declara el estudio: acá no
+# se calcula ninguna retención (ver `openlegal/honorarios.py`).
+def cmd_honorario_crear(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    if args.monto is None and args.bruto is None:
+        salida_error(
+            "indica --monto (lo pactado con el cliente) o --bruto (lo que sale en tu boleta): "
+            "sin uno de los dos no hay nada que cobrar. Son CLP enteros: 350000, no 350.000,00"
+        )
+    honorario_id = honorarios.registrar_honorario(
+        db, usuario, args.causa, args.modalidad, monto_pactado=args.monto,
+        descripcion=args.descripcion, fecha=args.fecha, monto_bruto=args.bruto,
+        retencion_sii=args.retencion,
+    )
+    fila = db.uno("SELECT * FROM honorarios WHERE id = ?", (honorario_id,))
+    if not fila:
+        salida_error(f"no pude leer el honorario {honorario_id} que se acaba de registrar")
+    print(f"honorario {honorario_id} registrado en la causa {args.causa} ({args.modalidad})")
+    print(
+        f"  fecha: {fila['fecha']} · pactado: {honorarios.clp(fila['monto_pactado'])} · "
+        f"líquido: {honorarios.clp(fila['monto_liquido'])} · estado: {fila['estado_pago']}"
+    )
+    if fila["descripcion"]:
+        print(f"  qué se pactó: {fila['descripcion']}")
+    if fila["monto_bruto"] is not None and fila["retencion_sii"] is None:
+        print("AVISO: no declaraste retención, así que el líquido quedó igual al bruto.")
+        print("       La tasa la copia el estudio de su boleta y se pasa con --retencion:")
+        print("       el CRM no la calcula ni supone (y no hay integración con el SII).")
+
+
+def cmd_honorario_listar(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    filas = honorarios.listar_honorarios(db, usuario, args.causa)
+    _imprimir(
+        "honorarios",
+        [
+            {
+                "id": f["id"],
+                "causa": f["caratula"],
+                "fecha": f["fecha"],
+                "modalidad": f["modalidad"],
+                "pactado": honorarios.clp(f["monto_pactado"]),
+                "liquido": honorarios.clp(f["monto_liquido"]),
+                "pagado": honorarios.clp(f["monto_pagado"]),
+                "estado": f["estado_pago"],
+                "descripcion": f["descripcion"],
+            }
+            for f in filas
+        ],
+    )
+
+
+def cmd_gasto_crear(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    gasto_id = honorarios.registrar_gasto(
+        db, usuario, args.causa, args.concepto, args.monto, fecha=args.fecha,
+        comprobante=args.comprobante, pagado_por_estudio=not args.lo_pago_el_cliente,
+    )
+    print(f"gasto {gasto_id} registrado en la causa {args.causa}: {args.concepto} {honorarios.clp(args.monto)}")
+    if args.lo_pago_el_cliente:
+        print("  (lo pagó el cliente: queda de constancia, no se le cuenta en la cuenta de dividendos)")
+    elif not args.comprobante:
+        print("  ojo: quedó sin comprobante. Anota el respaldo con --comprobante cuando lo tengas a mano.")
+        print("       Un gasto sin respaldo en la cuenta del cliente es difícil de sostener.")
+
+
+def cmd_pago_crear(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    pago_id = honorarios.registrar_pago(
+        db, usuario, args.causa, args.monto, fecha=args.fecha, medio=args.medio,
+        referencia=args.referencia, nota=args.nota, honorario_id=args.honorario,
+    )
+    print(f"pago {pago_id} registrado: {honorarios.clp(args.monto)} a la causa {args.causa} ({args.medio})")
+    if args.honorario:
+        fila = db.uno("SELECT * FROM honorarios WHERE id = ?", (args.honorario,))
+        if not fila:
+            salida_error(f"no existe el honorario {args.honorario} en este estudio")
+        print(
+            f"  honorario {args.honorario}: pagado {honorarios.clp(fila['monto_pagado'])} de "
+            f"{honorarios.clp(fila['monto_liquido'])} · estado {fila['estado_pago']}"
+        )
+    else:
+        print("  el pago quedó sin imputar a un honorario: se descuenta del saldo de la causa igual,")
+        print("  pero el CRM no puede decir cuál honorario quedó pagado. Con --honorario N lo imputa.")
+
+
+def cmd_cuenta(args) -> None:
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    datos = honorarios.cuenta(db, usuario, args.causa)
+    estudio = datos["estudio"]
+    cliente = datos["cliente"] or {}
+    causa = datos["causa"]
+
+    print(f"\ncuenta de dividendos · causa {causa['id']}")
+    print("=" * 62)
+    print(f"estudio:  {estudio.get('nombre')}" + (f" · RUT {estudio.get('rut')}" if estudio.get("rut") else ""))
+    print(f"cliente:  {cliente.get('nombre') or '(sin cliente asignado a la causa)'}")
+    print(f"          RUT {cliente.get('rut') or 's/informar'} · {cliente.get('direccion') or 'domicilio s/informar'}")
+    print(f"causa:    {causa.get('caratula')}")
+    print(f"          ROL/RIT {causa.get('rol_rit') or 's/informar'} · {causa.get('tribunal') or 'tribunal s/informar'}")
+
+    _imprimir(
+        "honorarios",
+        [
+            {
+                "id": h["id"],
+                "fecha": h["fecha"],
+                "modalidad": h["modalidad"],
+                "que se pacto": h["descripcion"],
+                "pactado": honorarios.clp(h["monto_pactado"]),
+                "liquido": honorarios.clp(h["monto_liquido"]),
+                "pagado": honorarios.clp(h["monto_pagado"]),
+                "estado": h["estado_pago"],
+            }
+            for h in datos["honorarios"]
+        ],
+    )
+    _imprimir(
+        "gastos de la causa",
+        [
+            {
+                "fecha": g["fecha"],
+                "concepto": g["concepto"],
+                "comprobante": g["comprobante"],
+                "monto": honorarios.clp(g["monto"]),
+                "se le cuenta al cliente": "si" if honorarios._por_cuenta_del_cliente(g) else "no",
+            }
+            for g in datos["gastos"]
+        ],
+    )
+    _imprimir(
+        "pagos recibidos",
+        [
+            {
+                "fecha": p["fecha"],
+                "monto": honorarios.clp(p["monto"]),
+                "medio": p["medio"],
+                "honorario": p["honorario_id"],
+                "referencia": p["referencia"],
+                "registro": p["registrado_por_nombre"],
+            }
+            for p in datos["pagos"]
+        ],
+    )
+
+    totales = datos["totales"]
+    print("\ntotales")
+    print("-" * 7)
+    print(f"  honorarios pactados:            {honorarios.clp(totales['honorarios_pactado'])}")
+    print(f"  honorarios líquidos:            {honorarios.clp(totales['honorarios_liquido'])}")
+    print(f"  gastos de la causa:             {honorarios.clp(totales['gastos'])}")
+    print(f"  gastos por cuenta del cliente:  {honorarios.clp(totales['gastos_por_cuenta_del_cliente'])}")
+    print(f"  pagos recibidos:              - {honorarios.clp(totales['pagos'])}")
+    etiqueta = "a favor del cliente" if totales["saldo"] < 0 else "por pagar"
+    print(f"  SALDO {etiqueta}:{' ' * max(1, 20 - len(etiqueta))}{honorarios.clp(totales['saldo'])}")
+    print("  (saldo = honorarios líquidos + gastos por cuenta del cliente - pagos)")
+    for aviso in datos["advertencias"]:
+        print(f"AVISO: {aviso}")
+
+    if args.html:
+        ruta = pathlib.Path(args.html)
+        ruta.write_text(honorarios.html_cuenta(datos), encoding="utf-8")
+        print(f"\ncuenta imprimible escrita en {ruta}")
+        print("  (A4, todo embebido: se abre e imprime sin conexión; no es un documento tributario)")
+
+
 def cmd_mcp(args) -> None:
     """Servidor MCP por stdio: es el puente para que el agente escriba en el CRM."""
     from .mcp import main as mcp_main
@@ -459,6 +642,31 @@ def cmd_mcp(args) -> None:
     mcp_main(argv)
 
 
+def _ruta_token() -> pathlib.Path:
+    """Dónde queda anotado el token del panel (permiso 600, junto al resto de la config)."""
+    return pathlib.Path(
+        os.environ.get("OPENLEGAL_TOKEN_FILE") or "~/.openlegal/token_panel.txt"
+    ).expanduser()
+
+
+def _guardar_token(token: str) -> pathlib.Path | None:
+    """Escribe el token del panel para poder leerlo sin buscarlo.
+
+    El token es la llave del panel —con él se ve el estudio entero—, así que va a un archivo
+    con permiso 600 y nunca a un lugar público. Se escribe sólo cuando lo generó el servidor:
+    si lo eligió quien lo arrancó, ya sabe cuál es. Si no se puede escribir, no pasa nada: el
+    servidor igual lo imprime y el panel sigue funcionando.
+    """
+    ruta = _ruta_token()
+    try:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(token, encoding="utf-8")
+        ruta.chmod(0o600)
+    except OSError:
+        return None
+    return ruta
+
+
 def cmd_serve(args) -> None:
     try:
         import uvicorn
@@ -472,19 +680,27 @@ def cmd_serve(args) -> None:
     esquema = "https" if certificado else "http"
     url = f"{esquema}://{args.host}:{args.port}/?token={app.state.token}"
 
-    print("\nOpen Legal Harness — CRM Jurídico en marcha")
-    print(f"  panel:  {url}")
-    print(f"  base:   {app.state.db_url or '(por defecto)'}")
+    # flush=True a propósito: cuando la salida va a un archivo en vez de a una terminal,
+    # Python la guarda en un búfer y el mensaje no aparece hasta que el proceso termina —
+    # o sea, nunca, porque es un servidor. Sin esto, arrancar el panel como servicio deja un
+    # archivo vacío y nadie se entera de cuál era la dirección.
+    print("\nOpen Legal Harness — CRM Jurídico en marcha", flush=True)
+    print(f"  panel:  {url}", flush=True)
+    if not args.token:
+        archivo = _guardar_token(app.state.token)
+        if archivo:
+            print(f"  token:  también queda en {archivo} (permiso 600)", flush=True)
+    print(f"  base:   {app.state.db_url or '(por defecto)'}", flush=True)
     if certificado:
         # En la oficina el panel queda en la red local: sin certificado, las contraseñas
         # viajan en claro entre los equipos. El certificado no hace falta que sea de una
         # autoridad: alcanza con que sea el mismo en todos los equipos y que el navegador
         # lo acepte una vez (scripts/certificado_local.sh lo genera).
-        print(f"  TLS:    {certificado}")
+        print(f"  TLS:    {certificado}", flush=True)
         print("  (si el navegador avisa que el certificado no es de confianza: es el esperado")
         print("   en un certificado propio; se acepta una vez por equipo)")
     else:
-        print("  aviso: sin certificado el panel va en HTTP. Si lo van a usar desde otros")
+        print("  aviso: sin certificado el panel va en HTTP. Si lo van a usar desde otros", flush=True)
         print("         equipos, generá uno con scripts/certificado_local.sh y pasalo con --cert")
     print("  el token es local; el servicio solo escucha en el host indicado\n")
 
@@ -931,6 +1147,65 @@ def construir_parser() -> argparse.ArgumentParser:
     pa.add_argument("--usuario")
     pa.add_argument("--estudio", type=int)
     pa.set_defaults(func=cmd_audiencia_crear)
+
+    p = sub.add_parser("honorario", help="honorarios pactados por causa (montos en CLP enteros)")
+    sub_ho = p.add_subparsers(dest="accion", required=True)
+    pho = sub_ho.add_parser("crear", help="registra un honorario pactado en una causa")
+    pho.add_argument("--causa", type=int, required=True)
+    pho.add_argument("--modalidad", default="fijo", choices=list(honorarios.MODALIDADES))
+    pho.add_argument("--monto", type=int, help="lo pactado con el cliente, en CLP enteros (350000 = $350.000)")
+    pho.add_argument("--descripcion", help="qué se pactó, en palabras")
+    pho.add_argument("--fecha", help="desde cuándo rige el pacto: YYYY-MM-DD")
+    pho.add_argument("--bruto", type=int, help="monto bruto de tu boleta, en CLP enteros")
+    pho.add_argument(
+        "--retencion", type=int,
+        help="retención que declara el estudio (la copia de su boleta); el CRM no la calcula",
+    )
+    pho.add_argument("--usuario")
+    pho.add_argument("--estudio", type=int)
+    pho.set_defaults(func=cmd_honorario_crear)
+    pho = sub_ho.add_parser("listar", help="honorarios de una causa, o de las causas visibles")
+    pho.add_argument("--causa", type=int)
+    pho.add_argument("--usuario")
+    pho.add_argument("--estudio", type=int)
+    pho.set_defaults(func=cmd_honorario_listar)
+
+    p = sub.add_parser("gasto", help="gastos de una causa (notaría, receptor, peritajes…)")
+    sub_g = p.add_subparsers(dest="accion", required=True)
+    pg = sub_g.add_parser("crear")
+    pg.add_argument("--causa", type=int, required=True)
+    pg.add_argument("--concepto", required=True, help="qué se pagó")
+    pg.add_argument("--monto", type=int, required=True, help="CLP enteros (25000 = $25.000)")
+    pg.add_argument("--fecha", help="YYYY-MM-DD")
+    pg.add_argument("--comprobante", help="boleta, factura o recibo que lo respalda")
+    pg.add_argument(
+        "--lo-pago-el-cliente", action="store_true",
+        help="el gasto lo pagó el cliente: queda de constancia y no se le cuenta en la cuenta",
+    )
+    pg.add_argument("--usuario")
+    pg.add_argument("--estudio", type=int)
+    pg.set_defaults(func=cmd_gasto_crear)
+
+    p = sub.add_parser("pago", help="pagos recibidos del cliente")
+    sub_pg = p.add_subparsers(dest="accion", required=True)
+    ppg = sub_pg.add_parser("crear", help="registra un abono; con --honorario N queda imputado")
+    ppg.add_argument("--causa", type=int, required=True)
+    ppg.add_argument("--monto", type=int, required=True, help="CLP enteros (200000 = $200.000)")
+    ppg.add_argument("--fecha", help="la del comprobante: YYYY-MM-DD")
+    ppg.add_argument("--medio", default="transferencia", choices=list(honorarios.MEDIOS))
+    ppg.add_argument("--referencia", help="n° de transferencia, cheque o comprobante")
+    ppg.add_argument("--nota")
+    ppg.add_argument("--honorario", type=int, help="honorario de ESTA causa al que se imputa el pago")
+    ppg.add_argument("--usuario")
+    ppg.add_argument("--estudio", type=int)
+    ppg.set_defaults(func=cmd_pago_crear)
+
+    p = sub.add_parser("cuenta", help="cuenta de dividendos de una causa; con --html la deja imprimible")
+    p.add_argument("--causa", type=int, required=True)
+    p.add_argument("--html", help="ruta donde escribir la cuenta imprimible (A4, todo embebido)")
+    p.add_argument("--usuario")
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_cuenta)
 
     p = sub.add_parser("ia", help="uso de IA con datos de causas: autorizar, minimizar, registrar")
     sub_ia = p.add_subparsers(dest="accion", required=True)

@@ -71,7 +71,7 @@ enchufa el CRM por sus puntos de extensión públicos.
 | 1. `dsh` instalado y sirviendo la UI | ✅ verificado (`npm install -g --allow-scripts=... @deepseek-ai/dsh`, `dsh web --port 8799`) |
 | 2. CRM local servido por `openlegal serve` | ✅ verificado (106 pruebas, datos reales en SQLite y PostgreSQL) |
 | 3. Fila «CRM Jurídico» bajo *New session* + su panel | ✅ verificado en la GUI real (ver abajo) |
-| 4. MCP: las 21 herramientas del CRM + las 69 de open-legal-chile | ✅ verificado por stdio y en vivo (el perfil arranca los dos servidores) |
+| 4. MCP: las 25 herramientas del CRM + las 69 de open-legal-chile | ✅ verificado por stdio y en vivo (el perfil arranca los dos servidores) |
 | 5. Perfil `legal` con las cuatro piezas y la marca propia | ✅ verificado (`--dump-config` las muestra; lo monta `scripts/montar_en_dsh.sh`) |
 
 ### Montarlo en un paso (`scripts/montar_en_dsh.sh`)
@@ -185,8 +185,9 @@ el perfil se crea desde la plantilla oficial:
 ## MCP: el agente escribe en el CRM
 
 `openlegal mcp` expone el CRM como servidor MCP (JSON-RPC 2.0 sobre stdio, mismo patrón
-que `open-legal-chile`), con 21 herramientas: `crm_estudio`, `crm_cliente_buscar`, `crm_cliente_crear`, `crm_causa_crear`, `crm_agenda`, `crm_causa_buscar`, `crm_causa_leer`, `crm_plazo_calcular`, `crm_plazo_crear`, `crm_plazo_listar`, `crm_plazo_actualizar`, `crm_plazo_cancelar`, `crm_plazo_cumplido`, `crm_audiencia_crear`, `crm_audiencia_actualizar`, `crm_audiencia_cancelar`, `crm_documento_registrar`, `crm_auditoria_leer`, `crm_ia_estado`, `crm_ia_redactar` y
-`crm_ia_registrar`.
+que `open-legal-chile`), con 25 herramientas: `crm_estudio`, `crm_cliente_buscar`, `crm_cliente_crear`, `crm_causa_crear`, `crm_agenda`, `crm_causa_buscar`, `crm_causa_leer`, `crm_plazo_calcular`, `crm_plazo_crear`, `crm_plazo_listar`, `crm_plazo_actualizar`, `crm_plazo_cancelar`, `crm_plazo_cumplido`, `crm_audiencia_crear`, `crm_audiencia_actualizar`, `crm_audiencia_cancelar`, `crm_documento_registrar`, `crm_auditoria_leer`, `crm_ia_estado`, `crm_ia_redactar`, `crm_ia_registrar`, `crm_honorario_registrar`, `crm_gasto_registrar`, `crm_pago_registrar` y
+`crm_cuenta_dividendos`.
+
 
 **El agente carga una causa completa**: busca el cliente (`crm_cliente_buscar`), lo crea con
 sus datos (`crm_cliente_crear`), abre la causa (`crm_causa_crear`), le carga los plazos
@@ -199,6 +200,17 @@ anonimizar o ejecutar la retención de datos (no tienen vuelta atrás) y sacar e
 un cliente del sistema (es salida de datos personales). Eso se hace desde el panel, con una
 persona apretando el botón. El agente actúa como el usuario que lo invoca: las causas que no
 le corresponden no existen para él.
+
+## Honorarios, gastos y cuenta de dividendos
+
+El módulo de plata: lo pactado con el cliente, lo que el estudio gasta en tramitar y lo que el
+cliente va pagando, y con eso la **cuenta de dividendos** de la causa, lista para imprimir.
+
+La regla es la misma de siempre: **la retención no se inventa**. La tasa la declara el estudio
+—copiada de su boleta— y llega como dato; el CRM no la calcula. Si no se declara, el líquido
+queda igual al bruto y la cuenta lo advierte por escrito, junto con los gastos sin comprobante
+y los pagos sin imputar. No hay emisión de boletas ni integración con el SII: ver
+[`docs/honorarios.md`](docs/honorarios.md) para el detalle, los permisos por rol y lo que falta.
 
 
 `crm_plazo_actualizar` y `crm_plazo_cancelar` nacieron de la primera prueba con un
@@ -372,7 +384,7 @@ El modelo aísla todo por estudio (`estudio_id`), registra cada acción en
 - **F1** — autenticación con sesiones en la API, Postgres de oficina con migraciones versionadas, empaquetado y tests de integración.
 - **F2** — agente y servidor MCP `crm_*` para que los agentes (vigilante de proveídos, laboral, litigios) lean y escriban el CRM con trazabilidad.
 - **F3** — interfaz: panel del socio, agenda compartida y vista del cliente.
-- **F4** — honorarios: boletas de honorarios, retención SII según la tabla vigente de la Ley 21.133 (a validar), pactos y gastos de tramitación reembolsables.
+- **F4** — honorarios: **hecho lo que no depende del SII** (pactos, gastos de tramitación reembolsables, pagos, cuenta de dividendos; ver [`docs/honorarios.md`](docs/honorarios.md)). Falta lo tributario: boletas de honorarios y la tabla de retención de la Ley 21.133 (a validar contra el SII).
 - **F5** — integración con PJUD/OJV y las herramientas de `open-legal-chile`.
 
 ## Pruebas

@@ -656,3 +656,165 @@ class TestElAgenteCargaLaCausaCompleta(BaseMCP):
         self.assertIsNone(
             self.db.uno("SELECT id FROM causas WHERE caratula = ?", ("Intento cruzado",))
         )
+
+
+class TestHonorariosYPagosPorMCP(BaseMCP):
+    """El agente carga la plata de la causa y lee la cuenta de dividendos.
+
+    Dos reglas que la herramienta tiene que sostener por sí sola: la retención la declara el
+    estudio (el agente no la inventa ni la calcula) y un pago imputado al honorario de otra
+    causa se rechaza — imputarlo descuadraría dos cuentas a la vez.
+    """
+
+    def test_registra_los_tres_y_lee_la_cuenta(self):
+        honorario, error = self.llamar(
+            "crm_honorario_registrar", causa_id=self.causa, modalidad="fijo", monto_pactado=350000,
+            descripcion="Demanda civil", monto_bruto=350000, retencion_sii=35000,
+        )
+        self.assertFalse(error)
+        self.assertEqual(honorario["honorario"]["monto_liquido"], 315000)
+        self.assertEqual(honorario["honorario"]["estado_pago"], "pendiente")
+        self.assertIsNone(honorario["aviso"], "la retención venía declarada por el estudio")
+
+        gasto, error = self.llamar(
+            "crm_gasto_registrar", causa_id=self.causa, concepto="Notaría 45", monto=25000,
+            comprobante="boleta 45", fecha="2026-09-16",
+        )
+        self.assertFalse(error)
+        self.assertEqual(gasto["gasto"]["monto"], 25000)
+        self.assertIsNone(gasto["aviso"])
+
+        pago, error = self.llamar(
+            "crm_pago_registrar", causa_id=self.causa, monto=200000,
+            honorario_id=honorario["honorario_id"], referencia="transferencia 8812", fecha="2026-09-18",
+        )
+        self.assertFalse(error)
+        self.assertEqual(pago["honorario"]["estado_pago"], "parcial")
+        self.assertEqual(pago["saldo_de_la_causa"], 140000)     # 315.000 + 25.000 - 200.000
+        self.assertIn("bitácora", pago["recordatorio"])
+
+        cuenta, error = self.llamar("crm_cuenta_dividendos", causa_id=self.causa)
+        self.assertFalse(error)
+        self.assertEqual(cuenta["estudio"]["nombre"], "Estudio MCP")
+        self.assertEqual(cuenta["cliente"]["nombre"], "Constructora Andes SpA")
+        self.assertEqual(cuenta["causa"]["caratula"], "Pérez con Andes SpA")
+        self.assertEqual(cuenta["totales"], {
+            "honorarios_pactado": 350000, "honorarios_liquido": 315000, "honorarios_pagado": 200000,
+            "gastos": 25000, "gastos_por_cuenta_del_cliente": 25000, "pagos": 200000, "saldo": 140000,
+        })
+        self.assertEqual(len(cuenta["honorarios"]), 1)
+        self.assertEqual(len(cuenta["gastos"]), 1)
+        self.assertEqual(len(cuenta["pagos"]), 1)
+
+        # Y todo quedó en la bitácora, con quién lo hizo.
+        acciones = [f["accion"] for f in self.db.todos("SELECT accion FROM auditoria")]
+        self.assertIn("honorario.crear", acciones)
+        self.assertIn("gasto.crear", acciones)
+        self.assertIn("pago.crear", acciones)
+
+    def test_sin_retencion_declarada_el_agente_recibe_el_aviso(self):
+        honorario, error = self.llamar(
+            "crm_honorario_registrar", causa_id=self.causa, modalidad="hora", monto_bruto=120000
+        )
+        self.assertFalse(error)
+        self.assertEqual(honorario["honorario"]["monto_liquido"], 120000)
+        self.assertIn("no se declaró retención", honorario["aviso"])
+        self.assertIn("retencion_sii", honorario["aviso"], "el aviso dice dónde va la tasa")
+
+        cuenta, _ = self.llamar("crm_cuenta_dividendos", causa_id=self.causa)
+        self.assertTrue(any("no se declaró retención" in a for a in cuenta["advertencias"]))
+
+    def test_el_pago_deja_el_honorario_en_parcial_y_despues_en_pagado(self):
+        honorario, _ = self.llamar(
+            "crm_honorario_registrar", causa_id=self.causa, monto_pactado=100000, monto_bruto=100000
+        )
+        primero, error = self.llamar(
+            "crm_pago_registrar", causa_id=self.causa, monto=40000, honorario_id=honorario["honorario_id"],
+            medio="efectivo",
+        )
+        self.assertFalse(error)
+        self.assertEqual(primero["honorario"]["estado_pago"], "parcial")
+
+        segundo, error = self.llamar(
+            "crm_pago_registrar", causa_id=self.causa, monto=60000, honorario_id=honorario["honorario_id"]
+        )
+        self.assertFalse(error)
+        self.assertEqual(segundo["honorario"]["estado_pago"], "pagado")
+        self.assertEqual(segundo["honorario"]["monto_pagado"], 100000)
+
+    def test_un_pago_al_honorario_de_otra_causa_se_rechaza_y_no_se_guarda(self):
+        otra = service.crear_causa(self.db, self.socio, "Otra causa del estudio", cliente_id=self.cliente_id)
+        honorario, _ = self.llamar("crm_honorario_registrar", causa_id=self.causa, monto_pactado=100000)
+
+        datos, error = self.llamar(
+            "crm_pago_registrar", causa_id=otra, monto=50000, honorario_id=honorario["honorario_id"]
+        )
+        self.assertTrue(error)
+        self.assertIn("no de la causa", str(datos))
+        self.assertEqual(self.db.uno("SELECT COUNT(*) AS n FROM pagos")["n"], 0)
+
+    def test_argumentos_mal_formados_vuelven_como_error_accionable(self):
+        for herramienta, argumentos, esperado in (
+            ("crm_pago_registrar", {"causa_id": self.causa, "monto": "doscientos"}, "entero"),
+            ("crm_pago_registrar", {"causa_id": self.causa, "monto": 0}, "mayor o igual a 1"),
+            ("crm_pago_registrar", {"causa_id": self.causa, "monto": 5000, "medio": "bitcoin"}, "medio"),
+            ("crm_gasto_registrar", {"causa_id": self.causa, "concepto": "   ", "monto": 1000}, "concepto"),
+            ("crm_honorario_registrar", {"causa_id": self.causa, "modalidad": "por-las-ganancias"}, "modalidad"),
+            ("crm_honorario_registrar", {"causa_id": self.causa}, "monto_pactado"),
+            ("crm_cuenta_dividendos", {"causa_id": "la de Herrera"}, "causa_id"),
+        ):
+            datos, error = self.llamar(herramienta, **argumentos)
+            self.assertTrue(error, f"{herramienta} con {argumentos} debería fallar")
+            self.assertIn(esperado, str(datos))
+
+        # Nada se escribió y el CRM sigue disponible: un argumento malo no tumba la conexión.
+        self.assertEqual(self.db.uno("SELECT COUNT(*) AS n FROM pagos")["n"], 0)
+        self.assertEqual(self.db.uno("SELECT COUNT(*) AS n FROM honorarios")["n"], 0)
+        estudio, error = self.llamar("crm_estudio")
+        self.assertFalse(error)
+        self.assertEqual(estudio["rol"], "socio")
+
+    def test_un_paralegal_no_ve_la_cuenta(self):
+        paralegal_id = auth.crear_usuario(
+            self.db, self.estudio, "Paula Paralegal", "paula@mcp.cl", "paralegal", "clave"
+        )
+        service.asignar(self.db, self.socio, self.causa, paralegal_id, "apoyo")
+        contexto = self.contexto_extra("paula@mcp.cl")
+
+        respuesta = responder({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "crm_cuenta_dividendos", "arguments": {"causa_id": self.causa}},
+        }, contexto)
+        self.assertTrue(respuesta["result"]["isError"])
+        self.assertIn("honorario.leer", respuesta["result"]["content"][0]["text"])
+
+    def test_un_abogado_no_registra_honorarios_por_el_mcp(self):
+        contexto = self.contexto_extra("ana@mcp.cl")
+        respuesta = responder({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {
+                "name": "crm_honorario_registrar",
+                "arguments": {"causa_id": self.causa, "monto_pactado": 100000},
+            },
+        }, contexto)
+        self.assertTrue(respuesta["result"]["isError"])
+        self.assertIn("honorario.editar", respuesta["result"]["content"][0]["text"])
+        self.assertEqual(self.db.uno("SELECT COUNT(*) AS n FROM honorarios")["n"], 0)
+
+    def test_las_cuatro_herramientas_se_anuncian_con_sus_reglas(self):
+        por_nombre = {h["name"]: h for h in HERRAMIENTAS}
+        for nombre in (
+            "crm_honorario_registrar", "crm_gasto_registrar", "crm_pago_registrar", "crm_cuenta_dividendos",
+        ):
+            self.assertIn(nombre, por_nombre)
+            self.assertEqual(por_nombre[nombre]["inputSchema"]["type"], "object")
+
+        # Lo que el agente no puede deducir solo tiene que estar escrito en la descripción.
+        self.assertIn("CLP", por_nombre["crm_honorario_registrar"]["description"])
+        self.assertIn("retención", por_nombre["crm_honorario_registrar"]["description"])
+        self.assertIn("SII", por_nombre["crm_honorario_registrar"]["description"])
+        self.assertIn("consecuencias", por_nombre["crm_pago_registrar"]["description"])
+        self.assertIn("confirma", por_nombre["crm_pago_registrar"]["description"])
+        self.assertIn("sólo lectura", por_nombre["crm_cuenta_dividendos"]["description"])
+        self.assertEqual(por_nombre["crm_pago_registrar"]["inputSchema"]["required"], ["causa_id", "monto"])
+        self.assertEqual(por_nombre["crm_cuenta_dividendos"]["inputSchema"]["required"], ["causa_id"])
