@@ -8,13 +8,21 @@ propio equipo y el estudio de ejemplo tiene seis usuarios.
 
 | Pieza | Dónde | Cómo se levanta |
 |---|---|---|
-| El harness (dsh, perfil `legal`) | `http://127.0.0.1:8801` | `dsh --profile legal --no-open --port 8801` |
+| El harness (dsh, perfil `legal`) | `http://127.0.0.1:8801` | `bash scripts/levantar_harness.sh` |
 | El CRM (panel + API) | `http://127.0.0.1:8899` | `openlegal --db sqlite:///~/.openlegal/demo.db serve --port 8899 --token <token>` |
 | La base del estudio de ejemplo | `~/.openlegal/demo.db` | — (la usan el panel **y** el agente: los dos ven lo mismo) |
 | El token del panel | `~/.openlegal/token_panel.txt` | permiso 600: se lee, no se pega en el chat |
 
-El token del harness **cambia cada vez que arranca**: la dirección con el token la imprime
-al arrancar (`/tmp/harness_legal.log` guarda la última).
+El token del harness **cambia cada vez que arranca**, así que la dirección de ayer no sirve
+hoy. Por eso el arranque es un guion:
+
+```sh
+bash scripts/levantar_harness.sh
+```
+
+Deja la dirección con su token en `~/.openlegal/url_harness.txt` (permiso 600) y la imprime en
+la terminal. Si el harness ya estaba en marcha, te da la que ya tenía. El token del **CRM** no
+cambia: es el de `~/.openlegal/token_panel.txt`.
 
 ## Cómo entrar
 
