@@ -678,7 +678,14 @@ def cmd_serve(args) -> None:
     certificado = getattr(args, "cert", None)
     clave_cert = getattr(args, "key", None) or certificado
     esquema = "https" if certificado else "http"
+    # El token se imprime sólo cuando lo generó el servidor: si lo pasó quien lo arrancó, ya
+    # lo sabe, y repetirlo por la salida estándar es la forma más fácil de que termine escrito
+    # en un registro, en un archivo de servicio o en el chat de un asistente. Un token que
+    # aparece donde no debe se rota; no imprimirlo evita el problema en vez de administrarlo.
+    lo_generamos = not args.token
     url = f"{esquema}://{args.host}:{args.port}/?token={app.state.token}"
+    if not lo_generamos:
+        url = f"{esquema}://{args.host}:{args.port}/"
 
     # flush=True a propósito: cuando la salida va a un archivo en vez de a una terminal,
     # Python la guarda en un búfer y el mensaje no aparece hasta que el proceso termina —
