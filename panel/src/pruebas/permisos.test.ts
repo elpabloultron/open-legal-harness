@@ -19,6 +19,9 @@ describe("permisos del panel", () => {
     expect(permisoDe("cuenta", "list")).toBe("honorario.leer");
     expect(permisoDe("gastos", "create")).toBe("gasto.editar");
     expect(permisoDe("pagos", "create")).toBe("honorario.editar");
+    // El registro de IA se lee con `ia.leer` (socio y abogado), no con el permiso de la
+    // administración del CRM: el envío a un modelo es materia del estudio.
+    expect(permisoDe("ia", "list")).toBe("ia.leer");
   });
 
   it("no inventa permisos para módulos que no conoce", () => {

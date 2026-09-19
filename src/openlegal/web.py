@@ -42,6 +42,9 @@ Módulos (lo mismo que la terminal, sin terminal):
   Titulares  GET  /api/titulares       POST /api/titulares/exportar | /anonimizar
   Honorarios GET  /api/cuenta?causa=N  cuenta de dividendos (formato=html: imprimible)
              POST /api/honorarios       POST /api/gastos        POST /api/pagos
+  IA         GET  /api/ia?causa=N&bloqueados=si&limite=50
+             estado del proxy local, últimos envíos (metadatos, sin contenido),
+             envíos bloqueados con su motivo y autorizaciones por causa
 
 Los errores del dominio salen con su código: 400 lo que se puede corregir, 401 lo que pide
 entrar de nuevo, 403 lo que no le toca a ese rol, 429 la cuenta bloqueada por intentos
@@ -67,6 +70,8 @@ from . import (
     __version__,
     auth,
     honorarios,
+    ia,
+    ia_proxy,
     notificaciones,
     plazos,
     retencion,
@@ -840,5 +845,61 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
             db, usuario, rut=datos.rut, nombre=datos.nombre, email=datos.email,
             motivo=datos.motivo, simular=datos.simular, redactar_textos=datos.redactar_textos,
         )
+
+    # --------------------------------------------------- IA y transferencias
+    # Lo que el CRM sabe de su propio uso de IA: el estado del proxy local (dónde escucha, a
+    # qué proveedor le manda y qué hace con los datos), los últimos envíos, los que el proxy
+    # NO reenvió con su motivo, y las autorizaciones por causa. Todo son metadatos: el
+    # contenido de lo que se mandó no se guarda en ninguna parte, y la api_key del proveedor
+    # no sale nunca de acá (se informa «configurada» o «falta», nada más).
+    #
+    # El permiso es `ia.leer`, el mismo que ya cuida el registro `transferencias_ia`: lo tienen
+    # socio y abogado. El administrador del sistema tiene `auditoria.leer`, pero el registro de
+    # IA es materia del estudio, no de la administración del CRM.
+    @app.get("/api/ia")
+    def api_ia(
+        causa: int | None = None,
+        bloqueados: bool = False,
+        limite: int = 50,
+        ctx: dict = Depends(contexto_peticion),
+    ):
+        db, usuario = ctx["db"], ctx["usuario"]
+        auth.exigir(db, usuario, "ia.leer")
+        if causa is not None:
+            # Mirar lo de UNA causa exige acceso a esa causa (no basta el permiso del estudio).
+            auth.exigir(db, usuario, "ia.leer", causa)
+            visibles = None
+        else:
+            visibles = [c["id"] for c in auth.causas_visibles(db, usuario)]
+        limite = max(1, min(int(limite), 200))
+        return {
+            "proxy": ia_proxy.resumen(),
+            "envios": ia_proxy.envios_recientes(
+                db, causa_id=causa, solo_bloqueados=bloqueados, limite=limite,
+                visibles=visibles, estudio_id=usuario["estudio_id"],
+            ),
+            "bloqueados": ia_proxy.envios_recientes(
+                db, causa_id=causa, solo_bloqueados=True, limite=limite,
+                visibles=visibles, estudio_id=usuario["estudio_id"],
+            ),
+            "autorizaciones": ia_proxy.autorizaciones(
+                db, causa_id=causa, visibles=None if causa is not None else visibles, limite=limite
+            ),
+            "proveedores": [
+                {
+                    "proveedor": nombre,
+                    "pais": datos["pais"],
+                    "entrena_con_api": (
+                        "no" if datos["entrena_con_api"] is False
+                        else ("sin verificar" if datos["entrena_con_api"] is None else "sí")
+                    ),
+                    "retencion": datos["retencion"],
+                    "zdr": datos["zdr"],
+                    "nota": datos["nota"],
+                }
+                for nombre, datos in ia.PROVEEDORES.items()
+            ],
+            "aviso": ia_proxy.AVISO_SIN_CONTENIDO,
+        }
 
     return app

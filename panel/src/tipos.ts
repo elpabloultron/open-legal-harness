@@ -165,6 +165,100 @@ export interface CuentaDividendos {
   generado_en: string;
 }
 
+/* ---------------------------------------------- IA y transferencias */
+
+/**
+ * Un envío a un proveedor de IA, tal como queda registrado.
+ *
+ * Son METADATOS: el contenido de lo que se mandó no se guarda en ninguna parte (por eso no
+ * hay ningún campo con el texto). El hash es lo que permite demostrar que lo que salió es lo
+ * mismo que está en el expediente.
+ */
+export interface EnvioIA {
+  id: number;
+  causa_id: number | null;
+  autorizacion_id: number | null;
+  /** crm | proxy | otro: de dónde salió el envío */
+  origen: string;
+  /** por ejemplo openai-compat */
+  via: string | null;
+  proveedor: string;
+  modelo: string | null;
+  destino_pais: string | null;
+  caracteres: number;
+  hash_payload: string;
+  redactado: number;
+  bloqueado: number;
+  motivo_bloqueo: string | null;
+  creado_en: string;
+  caratula: string | null;
+  usuario: string | null;
+}
+
+export interface AutorizacionIA {
+  id: number;
+  causa_id: number;
+  /** analisis | redaccion | ambos */
+  alcance: string;
+  base_licitud: string;
+  titular: string | null;
+  vigente: number;
+  creado_en: string;
+  revocada_en: string | null;
+  caratula: string | null;
+  registrado_por_nombre: string | null;
+}
+
+/** El estado del proxy local. La api_key nunca llega: se informa «configurada» o «falta». */
+export interface EstadoProxyIA {
+  archivo: string;
+  permisos: string;
+  puerto: number;
+  /** La dirección del dialecto de OpenAI (`…/v1`). */
+  url: string;
+  /**
+   * La dirección del harness: el proxy a secas, SIN `/v1` ni `/anthropic`, porque el adaptador
+   * del protocolo `messages` le agrega `/v1/messages` él mismo.
+   */
+  url_anthropic: string;
+  activo: boolean;
+  proveedor: string;
+  base_url: string | null;
+  /** La dirección aguas arriba del dialecto de Anthropic (`/v1/messages`). */
+  base_url_anthropic: string | null;
+  modelo_por_defecto: string | null;
+  destino_pais: string;
+  minimizar: boolean;
+  permitir_sin_autorizacion: boolean;
+  avisar_escritorio: boolean;
+  causa_por_defecto: number | null;
+  api_key: string;
+  base_de_datos: string;
+  /** Cómo se registra un envío del dialecto de OpenAI (`openai-compat`). */
+  via: string;
+  /** Cómo se registra un envío del dialecto de Anthropic (`anthropic-compat`). */
+  via_anthropic: string;
+  avisos: string[];
+}
+
+export interface ProveedorIA {
+  proveedor: string;
+  pais: string;
+  entrena_con_api: string;
+  retencion: string;
+  zdr: string;
+  nota: string;
+}
+
+export interface ModuloIA {
+  proxy: EstadoProxyIA;
+  envios: EnvioIA[];
+  bloqueados: EnvioIA[];
+  autorizaciones: AutorizacionIA[];
+  proveedores: ProveedorIA[];
+  aviso: string;
+}
+
 /** Qué permiso del servidor pide cada recurso y cada acción del panel. */
 export const PERMISOS: Record<string, Record<string, string>> = {
   causas: { list: "causa.leer", create: "causa.crear" },
@@ -184,6 +278,9 @@ export const PERMISOS: Record<string, Record<string, string>> = {
   gastos: { list: "gasto.leer", create: "gasto.editar" },
   pagos: { list: "honorario.leer", create: "honorario.editar" },
   cuenta: { list: "honorario.leer" },
+  // La pantalla de IA pide `ia.leer`, el mismo permiso que cuida el registro de envíos: lo
+  // tienen socio y abogado. La administración del CRM (`auditoria.leer`) no alcanza.
+  ia: { list: "ia.leer" },
 };
 
 export function permisoDe(recurso: string, accion: string): string | undefined {

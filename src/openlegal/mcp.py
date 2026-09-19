@@ -35,7 +35,7 @@ import os
 import sys
 from typing import Any
 
-from . import auth, honorarios, ia, plazos, seguridad, service
+from . import auth, honorarios, ia, ia_proxy, plazos, seguridad, service
 from .db import DB
 
 PROTOCOLO = "2026-07-28"
@@ -493,6 +493,35 @@ HERRAMIENTAS: list[dict[str, Any]] = [
                 "redactado": {"type": "boolean", "default": False},
             },
             "required": ["causa_id", "proveedor", "texto"],
+        },
+    },
+    {
+        "name": "crm_envios_ia",
+        "description": (
+            "Lista los últimos envíos a proveedores de IA que quedaron registrados (los del CRM "
+            "y los que pasaron por el proxy local del estudio). Devuelve METADATOS: proveedor, "
+            "modelo, país de destino, cantidad de caracteres, hash SHA-256 del texto, si iba "
+            "minimizado, la causa, quién lo mandó, de dónde salió y si el proxy lo bloqueó con "
+            "su motivo. El contenido de lo que se envió NO se guarda en ninguna parte, así que "
+            "acá no vas a encontrar el texto: el hash sirve para probar que lo que está en el "
+            "expediente es lo mismo que salió, no para leerlo. Para qué sirve: es la prueba de "
+            "licitud del tratamiento (qué salió, cuándo, hacia dónde y bajo qué autorización), "
+            "lo que la ley pide poder demostrar (art. 13 letra e) y arts. 27 a 29 de la Ley "
+            "19.628 en su texto reformado por la Ley 21.719). Úsala para responder «¿qué se "
+            "mandó de esta causa?» o para revisar los intentos bloqueados por falta de "
+            "autorización."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "causa_id": {"type": "integer", "description": "sólo los envíos de esa causa"},
+                "bloqueados": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "sólo los que NO se reenviaron (sin autorización, sin poder minimizar, o sin conexión con el proveedor), con su motivo",
+                },
+                "limite": {"type": "integer", "default": 50, "description": "cuántos envíos devolver (por defecto 50)"},
+            },
         },
     },
     {
@@ -1023,6 +1052,31 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
         )
         return registro
 
+    if nombre == "crm_envios_ia":
+        causa_pedida = argumentos.get("causa_id")
+        limite = entero(argumentos.get("limite") or 50, "limite", minimo=1)
+        causa_filtro: int | None = None
+        visibles_filtro: list[int] | None = None
+        if causa_pedida:
+            auth.exigir(db, usuario, "ia.leer", int(causa_pedida))
+            causa_filtro = int(causa_pedida)
+        else:
+            auth.exigir(db, usuario, "ia.leer")
+            visibles_filtro = [c["id"] for c in auth.causas_visibles(db, usuario)]
+        filas = ia_proxy.envios_recientes(
+            db, causa_id=causa_filtro, solo_bloqueados=bool(argumentos.get("bloqueados", False)),
+            limite=limite, visibles=visibles_filtro, estudio_id=usuario["estudio_id"],
+        )
+        return {
+            "total": len(filas),
+            "envios": filas,
+            "aviso": (
+                f"{ia_proxy.AVISO_SIN_CONTENIDO}. El hash es lo que permite demostrar que el "
+                "texto que salió es el que está en el expediente: no intentes reconstruir el "
+                "contenido a partir de él."
+            ),
+        }
+
     if nombre == "crm_honorario_registrar":
         modalidad = str(argumentos.get("modalidad") or "fijo").strip().lower()
         if modalidad not in honorarios.MODALIDADES:
@@ -1146,7 +1200,9 @@ def responder(solicitud: dict, ctx: Contexto) -> dict | None:
                 "instructions": (
                     "CRM jurídico chileno local (Open Legal Harness). Antes de enviar el expediente a un modelo, "
                     "revisa crm_ia_estado y usa crm_ia_redactar para minimizar; registra el envío "
-                    "con crm_ia_registrar. Los plazos se calculan con el Art. 66 CPC "
+                    "con crm_ia_registrar. Si el modelo se llama a través del proxy local del estudio, "
+                    "cada uso de IA queda registrado solo: revisa crm_envios_ia (son metadatos: el "
+                    "contenido no se guarda). Los plazos se calculan con el Art. 66 CPC "
                     "(días hábiles, sin domingos ni feriados)."
                 ),
             },

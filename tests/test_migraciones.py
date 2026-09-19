@@ -12,8 +12,15 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from openlegal import auth, service  # noqa: E402
-from openlegal.db import DB, MIGRACIONES, _migracion_1_esquema_base  # noqa: E402
+from openlegal import auth, ia, ia_proxy, service  # noqa: E402
+from openlegal.db import (  # noqa: E402
+    COLUMNAS_TRANSFERENCIAS,
+    DB,
+    MIGRACIONES,
+    _causa_id_es_obligatoria,
+    _migracion_1_esquema_base,
+)
+from openlegal.db import _migracion_7_envios_de_ia_de_cualquier_origen as _migracion_7  # noqa: E402
 
 
 class BaseMigrable(unittest.TestCase):
@@ -212,6 +219,126 @@ class TestIntegridadDeDocumentos(BaseMigrable):
     def test_verificar_documento_inexistente_avisa(self):
         with self.assertRaises(ValueError):
             service.verificar_documento(self.db, self.socio, 999)
+
+
+class TestEnviosDeIASinCausa(BaseMigrable):
+    """La migración 7: el registro de IA deja de ser sólo del CRM.
+
+    En SQLite, quitarle el NOT NULL a `causa_id` obliga a recrear la tabla. Eso es lo que
+    estas pruebas cuidan: que la recreación no pierda ni una fila, que sea idempotente y que
+    el esquema viejo (una base que ya venía en uso) se actualice sin tocar expedientes.
+    """
+
+    #: La tabla tal como era antes de la migración 7: `causa_id` obligatorio y sin las
+    #: columnas del proxy. Se escribe acá a propósito, aunque se repita el esquema: es el
+    #: único modo de probar de verdad la actualización de una base instalada.
+    ESQUEMA_VIEJO = (
+        "CREATE TABLE transferencias_ia ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " causa_id INTEGER NOT NULL REFERENCES causas(id) ON DELETE CASCADE,"
+        " autorizacion_id INTEGER REFERENCES autorizaciones_ia(id) ON DELETE SET NULL,"
+        " usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,"
+        " proveedor TEXT NOT NULL,"
+        " modelo TEXT,"
+        " destino_pais TEXT,"
+        " documentos TEXT,"
+        " caracteres INTEGER NOT NULL DEFAULT 0,"
+        " hash_payload TEXT NOT NULL,"
+        " redactado INTEGER NOT NULL DEFAULT 0,"
+        " creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+
+    def test_base_nueva_permite_envios_sin_causa(self):
+        self._estudio_con_equipo()
+
+        for columna in ("origen", "via", "bloqueado", "motivo_bloqueo", "estudio_id"):
+            self.assertIn(columna, self.db.columnas("transferencias_ia"))
+        self.assertFalse(_causa_id_es_obligatoria(self.db), "un envío del harness puede no ser de una causa")
+
+        enviado = ia_proxy.registrar(
+            self.db, proveedor="deepseek", modelo="deepseek-chat", destino_pais="China",
+            texto="consulta suelta, sin expediente", causa_id=None, estudio_id=self.estudio,
+        )
+        fila = self.db.uno("SELECT * FROM transferencias_ia WHERE id = ?", (enviado["id"],))
+        assert fila is not None
+        self.assertIsNone(fila["causa_id"])
+        self.assertEqual(fila["origen"], "proxy")
+        self.assertEqual(fila["via"], "openai-compat")
+        self.assertEqual(fila["bloqueado"], 0)
+        self.assertEqual(fila["estudio_id"], self.estudio)
+
+    def test_una_base_vieja_se_actualiza_sin_perder_ninguna_fila(self):
+        self._estudio_con_equipo()
+        self.db.ejecutar("DROP TABLE transferencias_ia")
+        self.db.ejecutar(self.ESQUEMA_VIEJO)
+        self.db.ejecutar(
+            "CREATE INDEX IF NOT EXISTS idx_transferencias_causa ON transferencias_ia (causa_id, creado_en)"
+        )
+        texto = "texto que ya había salido con el CRM"
+        self.db.insertar(
+            "transferencias_ia",
+            {
+                "causa_id": self.causa_id, "usuario_id": self.socio["id"], "proveedor": "anthropic",
+                "modelo": "claude-opus-4.7", "destino_pais": "Estados Unidos",
+                "caracteres": len(texto), "hash_payload": ia.hash_payload(texto), "redactado": 1,
+            },
+        )
+        self.db.ejecutar("DELETE FROM migraciones WHERE version = 7")  # como si nunca hubiera corrido
+        self.assertTrue(_causa_id_es_obligatoria(self.db))
+
+        aplicadas = self.db.migrar()
+
+        self.assertIn("transferencias_ia recreada: causa_id admite nulo", aplicadas)
+        self.assertFalse(_causa_id_es_obligatoria(self.db))
+        # La fila vieja sigue ahí, con sus metadatos exactos y ya atribuida a su estudio.
+        filas = self.db.todos("SELECT * FROM transferencias_ia")
+        self.assertEqual(len(filas), 1)
+        fila = filas[0]
+        self.assertEqual((fila["proveedor"], fila["modelo"], fila["destino_pais"]), ("anthropic", "claude-opus-4.7", "Estados Unidos"))
+        self.assertEqual(fila["caracteres"], len(texto))
+        self.assertEqual(fila["hash_payload"], ia.hash_payload(texto))
+        self.assertEqual(fila["redactado"], 1)
+        self.assertEqual(fila["causa_id"], self.causa_id)
+        self.assertEqual(fila["origen"], "crm", "lo que ya estaba era del CRM")
+        self.assertEqual(fila["estudio_id"], self.estudio)
+        # El índice volvió con la tabla, y no quedó ninguna tabla a medio camino.
+        indices = {f["name"] for f in self.db.todos(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'transferencias_ia'"
+        )}
+        self.assertIn("idx_transferencias_causa", indices)
+        self.assertNotIn("transferencias_ia_nueva", self.db.tablas())
+        # Y ahora la tabla admite un envío sin causa.
+        transferencia_id = self.db.insertar(
+            "transferencias_ia",
+            {"causa_id": None, "proveedor": "local", "caracteres": 3, "hash_payload": ia.hash_payload("abc")},
+        )
+        self.assertTrue(transferencia_id)
+
+    def test_la_recreacion_no_se_hace_dos_veces(self):
+        self._estudio_con_equipo()
+        self.db.ejecutar("DELETE FROM migraciones WHERE version = 7")
+        self.db.migrar()
+        self.assertEqual(self.db.migrar(), [], "una base al día no se vuelve a tocar")
+        # Y con la migración 7 ya aplicada, volver a correrla no toca nada.
+        self.assertEqual(_migracion_7(self.db), [])
+
+    def test_migrar_no_toca_los_datos_de_los_expedientes(self):
+        self._estudio_con_equipo()
+        self.db.ejecutar("DELETE FROM migraciones WHERE version = 7")
+        self.db.migrar()
+
+        causa = self.db.uno("SELECT caratula FROM causas WHERE id = ?", (self.causa_id,))
+        assert causa is not None
+        self.assertEqual(causa["caratula"], "Muñoz con Banco del Sur")
+        cliente = self.db.uno("SELECT nombre FROM clientes WHERE id = ?", (self.cliente_id,))
+        assert cliente is not None
+        self.assertEqual(cliente["nombre"], "Rosa Elena Muñoz")
+
+    def test_las_columnas_que_se_copian_estan_todas(self):
+        # Un `SELECT *` entre dos versiones de la misma tabla es cómo se pierden datos en
+        # silencio: la lista de columnas de la recreación tiene que ser la tabla entera.
+        self.db.migrar()
+        self.assertEqual(set(COLUMNAS_TRANSFERENCIAS), self.db.columnas("transferencias_ia"))
 
 
 if __name__ == "__main__":

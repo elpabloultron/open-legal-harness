@@ -17,6 +17,7 @@ import { tema } from "./tema";
 import { BarraDelEstudio } from "./layout/Barra";
 import { Inicio } from "./modulos/Inicio";
 import { Avisos } from "./modulos/Avisos";
+import { Ia } from "./modulos/Ia";
 import { Honorarios } from "./modulos/Honorarios";
 import { Seguridad } from "./modulos/Seguridad";
 import { Retencion } from "./modulos/Retencion";
@@ -58,6 +59,7 @@ export function App() {
         <Route path="/seguridad" element={<Seguridad />} />
         <Route path="/retencion" element={<Retencion />} />
         <Route path="/titulares" element={<Titulares />} />
+        <Route path="/ia" element={<Ia />} />
       </CustomRoutes>
     </Admin>
   );

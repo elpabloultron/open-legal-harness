@@ -16,6 +16,7 @@ import ShieldIcon from "@mui/icons-material/ShieldOutlined";
 import HourglassIcon from "@mui/icons-material/HourglassEmptyOutlined";
 import FolderSharedIcon from "@mui/icons-material/FolderSharedOutlined";
 import PaymentsIcon from "@mui/icons-material/PaymentsOutlined";
+import SmartToyIcon from "@mui/icons-material/SmartToyOutlined";
 import { usePermissions } from "react-admin";
 
 interface Item {
@@ -39,6 +40,9 @@ const ITEMS: Item[] = [
   { name: "seguridad", label: "Seguridad", permiso: "usuario.gestionar", icono: <ShieldIcon />, a: "/seguridad" },
   { name: "retencion", label: "Retención", permiso: "usuario.gestionar", icono: <HourglassIcon />, a: "/retencion" },
   { name: "titulares", label: "Datos del titular", permiso: "titular.gestionar", icono: <FolderSharedIcon />, a: "/titulares" },
+  // Lo que salió hacia un modelo: con qué proveedor, hacia qué país, con qué huella y bajo qué
+  // autorización. Lo ven los mismos que pueden enviar (`ia.leer`): socio y abogado.
+  { name: "ia", label: "IA y transferencias", permiso: "ia.leer", icono: <SmartToyIcon />, a: "/ia" },
 ];
 
 export function MenuDelEstudio() {

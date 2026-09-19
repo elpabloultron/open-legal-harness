@@ -17,6 +17,7 @@
   openlegal auditoria
   openlegal titular exportar --rut 11.111.111-1          # acceso + portabilidad, JSON con hash
   openlegal titular anonimizar --rut 11.111.111-1 --motivo "pide supresión"   # sin --escribir, sólo informa
+  openlegal ia-proxy                     # proxy local (dialectos OpenAI y Anthropic): avisa y registra cada uso de IA
   openlegal serve --host 127.0.0.1 --port 8899   # panel web (CRM en el sidebar del harness)
 """
 from __future__ import annotations
@@ -29,7 +30,18 @@ import pathlib
 import sys
 from typing import NoReturn
 
-from . import auth, honorarios, ia, notificaciones, plazos, retencion, seguridad, service, titulares
+from . import (
+    auth,
+    honorarios,
+    ia,
+    ia_proxy,
+    notificaciones,
+    plazos,
+    retencion,
+    seguridad,
+    service,
+    titulares,
+)
 from .db import DB, MIGRACIONES
 
 
@@ -388,6 +400,74 @@ def cmd_ia_proveedores(args) -> None:
     print("\nnotas:")
     for nombre, datos in ia.PROVEEDORES.items():
         print(f"  {nombre}: {datos['nota']}")
+
+
+def cmd_ia_proxy(args) -> None:
+    """Arranca el proxy de IA, o muestra su estado y los últimos envíos (nunca la clave).
+
+    El estado es para responder la pregunta que importa antes de apuntarle el harness: ¿dónde
+    escucha, a qué proveedor le manda, minimiza o no, y qué salió últimamente? La api_key se
+    informa como «configurada» o «falta»: su valor no se imprime nunca, ni acá ni en el panel.
+    """
+    if not args.estado:
+        # El proxy no elige usuario: corre en la máquina del estudio y escribe en la base del
+        # CRM sin sesión (queda con origen 'proxy' y sin usuario). Lo que sí exige permisos es
+        # leer su registro, que es lo que hacen `--estado` y el panel.
+        ia_proxy.servir(base_de_datos=getattr(args, "db", None))
+        return
+
+    db = _ctx(args)
+    estudio_id = _estudio_actual(db, args.estudio)
+    usuario = _usuario_actual(db, estudio_id, args.usuario)
+    auth.exigir(db, usuario, "ia.leer")
+    resumen = ia_proxy.resumen()
+    print(f"proxy de IA: {resumen['url']} (dialecto OpenAI) · {resumen['url_anthropic']} (dialecto Anthropic)")
+    print(f"  {'escuchando' if resumen['activo'] else 'NO está corriendo (arráncalo con `openlegal ia-proxy`)'}")
+    print(f"  proveedor: {resumen['proveedor']} · aguas arriba: {resumen['base_url']}")
+    print(f"  aguas arriba (Anthropic, /v1/messages): {resumen['base_url_anthropic']}")
+    print(f"  país de destino: {resumen['destino_pais']} · modelo por defecto: {resumen['modelo_por_defecto'] or 'el del pedido'}")
+    print(
+        f"  minimizar: {'sí' if resumen['minimizar'] else 'NO'} · "
+        f"permitir sin autorización: {'sí' if resumen['permitir_sin_autorizacion'] else 'no'} · "
+        f"avisos de escritorio: {'sí' if resumen['avisar_escritorio'] else 'no'}"
+    )
+    print(f"  causa por defecto: {resumen['causa_por_defecto'] or 'ninguna'} · api_key: {resumen['api_key']}")
+    print(f"  configuración: {resumen['archivo']} (permisos {resumen['permisos']})")
+    print(f"  registro: {ia_proxy.AVISO_SIN_CONTENIDO}")
+    print(
+        f"  apunta el harness acá: baseURL={resumen['url_anthropic']} si habla el protocolo "
+        f"`messages` (sin /v1 ni /anthropic: el adaptador agrega /v1/messages) · "
+        f"base_url={resumen['url']} si habla el de OpenAI"
+    )
+    for aviso in resumen["avisos"]:
+        print(f"  AVISO: {aviso}")
+
+    filas = ia_proxy.envios_recientes(
+        db,
+        limite=20,
+        visibles=[c["id"] for c in auth.causas_visibles(db, usuario)],
+        estudio_id=usuario["estudio_id"],
+    )
+    _imprimir(
+        "últimos envíos a proveedores de IA",
+        [
+            {
+                "id": f["id"],
+                "fecha": f["creado_en"],
+                "causa": f.get("caratula") or (f"causa {f['causa_id']}" if f["causa_id"] else "sin causa"),
+                "origen": f["origen"],
+                "proveedor": f["proveedor"],
+                "modelo": f["modelo"],
+                "destino": f["destino_pais"],
+                "caracteres": f["caracteres"],
+                "minimizado": "sí" if f["redactado"] else "no",
+                "bloqueado": f["motivo_bloqueo"] or ("sí" if f["bloqueado"] else "no"),
+                "hash": (f["hash_payload"] or "")[:12] + "…",
+            }
+            for f in filas
+        ],
+    )
+    db.cerrar()
 
 
 def cmd_usuario_clave(args) -> None:
@@ -1260,6 +1340,15 @@ def construir_parser() -> argparse.ArgumentParser:
     pi.set_defaults(func=cmd_ia_transferencias)
     pi = sub_ia.add_parser("proveedores", help="qué sabemos de cada proveedor: país, retención, entrenamiento")
     pi.set_defaults(func=cmd_ia_proveedores)
+
+    p = sub.add_parser(
+        "ia-proxy",
+        help="proxy local (dialectos de OpenAI y de Anthropic): advierte y registra cada uso de IA",
+    )
+    p.add_argument("--estado", action="store_true", help="configuración vigente y últimos envíos, sin secretos")
+    p.add_argument("--usuario", help="email del usuario que consulta el estado")
+    p.add_argument("--estudio", type=int)
+    p.set_defaults(func=cmd_ia_proxy)
 
     p = sub.add_parser("mcp", help="servidor MCP por stdio (puente para el agente)")
     p.add_argument("--usuario", help="email del usuario con el que actúa el agente")

@@ -17,7 +17,7 @@ import unittest
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ / "src"))
 
-from openlegal import auth, service  # noqa: E402
+from openlegal import auth, ia_proxy, service  # noqa: E402
 from openlegal.db import DB  # noqa: E402
 from openlegal.mcp import HERRAMIENTAS, Contexto, responder, servir  # noqa: E402
 
@@ -550,6 +550,112 @@ class TestAudienciaRectificable(BaseMCP):
         nombres = {h["name"] for h in HERRAMIENTAS}
         self.assertIn("crm_audiencia_actualizar", nombres)
         self.assertIn("crm_audiencia_cancelar", nombres)
+
+
+class TestEnviosDeIA(BaseMCP):
+    """`crm_envios_ia`: la prueba de licitud, con metadatos y sin contenido.
+
+    Lo que el agente NO puede hacer con esto es leer lo que se mandó —no se guarda—, y eso
+    tiene que quedar claro en la descripción de la herramienta: un modelo que crea que puede
+    recuperar el texto inventaría una respuesta.
+    """
+
+    def _envio(self, causa=None, texto="texto del expediente", bloqueado=False, proveedor="deepseek",
+               origen="proxy", estudio=None):
+        registro = ia_proxy.registrar(
+            self.db, proveedor=proveedor, modelo="deepseek-chat", destino_pais="China",
+            texto=texto, causa_id=causa, estudio_id=self.estudio if estudio is None else estudio,
+            bloqueado=bloqueado, motivo_bloqueo="la causa no tiene autorización vigente de IA" if bloqueado else None,
+        )
+        if origen != "proxy":
+            self.db.ejecutar("UPDATE transferencias_ia SET origen = ? WHERE id = ?", (origen, registro["id"]))
+        return registro
+
+    def test_lista_los_envios_con_sus_metadatos(self):
+        self._envio(causa=self.causa, texto="una demanda entera")
+        datos, error = self.llamar("crm_envios_ia")
+
+        self.assertFalse(error)
+        self.assertEqual(datos["total"], 1)
+        envio = datos["envios"][0]
+        self.assertEqual(envio["proveedor"], "deepseek")
+        self.assertEqual(envio["modelo"], "deepseek-chat")
+        self.assertEqual(envio["destino_pais"], "China")
+        self.assertEqual(envio["caracteres"], len("una demanda entera"))
+        self.assertEqual(envio["causa_id"], self.causa)
+        self.assertIn("caratula", envio)
+        self.assertIn("metadatos", datos["aviso"])
+
+    def test_no_devuelve_el_contenido(self):
+        secreto = "el actor reconoció la deuda el 3 de marzo"
+        self._envio(causa=self.causa, texto=secreto)
+
+        datos, _ = self.llamar("crm_envios_ia")
+
+        self.assertNotIn(secreto, json.dumps(datos, ensure_ascii=False))
+        # Ninguna columna del registro guarda el texto: son todas metadatos.
+        self.assertEqual(
+            set(datos["envios"][0]),
+            {
+                "id", "causa_id", "autorizacion_id", "origen", "via", "proveedor", "modelo",
+                "destino_pais", "caracteres", "hash_payload", "redactado", "bloqueado",
+                "motivo_bloqueo", "creado_en", "caratula", "usuario",
+            },
+        )
+
+    def test_filtra_por_causa_y_por_bloqueados(self):
+        otra_causa = service.crear_causa(self.db, self.socio, "Otra causa", cliente_id=self.cliente_id)
+        self._envio(causa=self.causa)
+        self._envio(causa=otra_causa)
+        self._envio(causa=self.causa, bloqueado=True)
+
+        solo_una, _ = self.llamar("crm_envios_ia", causa_id=self.causa)
+        bloqueados, _ = self.llamar("crm_envios_ia", bloqueados=True)
+        todas, _ = self.llamar("crm_envios_ia")
+
+        self.assertEqual(solo_una["total"], 2)
+        self.assertEqual(bloqueados["total"], 1)
+        self.assertEqual(bloqueados["envios"][0]["bloqueado"], 1)
+        self.assertIn("autorización", bloqueados["envios"][0]["motivo_bloqueo"])
+        self.assertEqual(todas["total"], 3)
+
+    def test_los_envios_sin_causa_aparecen_sin_inventar_una_causa(self):
+        self._envio(causa=None)
+
+        datos, error = self.llamar("crm_envios_ia")
+
+        self.assertFalse(error)
+        self.assertEqual(datos["total"], 1)
+        self.assertIsNone(datos["envios"][0]["causa_id"])
+        self.assertIsNone(datos["envios"][0]["caratula"])
+
+    def test_un_rol_sin_permiso_no_los_ve(self):
+        self._envio(causa=self.causa)
+        secretaria_id = auth.crear_usuario(
+            self.db, self.estudio, "Carmen Díaz", "carmen@mcp.cl", "administrativo", "clave"
+        )
+        service.asignar(self.db, self.socio, self.causa, secretaria_id, "apoyo")
+        contexto = self.contexto_extra("carmen@mcp.cl")
+
+        respuesta = responder({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "crm_envios_ia", "arguments": {}},
+        }, contexto)
+
+        self.assertTrue(respuesta["result"]["isError"])
+        self.assertIn("ia.leer", respuesta["result"]["content"][0]["text"])
+
+    def test_la_herramienta_se_anuncia_con_sus_reglas(self):
+        por_nombre = {h["name"]: h for h in HERRAMIENTAS}
+        self.assertIn("crm_envios_ia", por_nombre)
+        descripcion = por_nombre["crm_envios_ia"]["description"]
+        # Lo que el agente no puede deducir solo: que son metadatos, que el contenido no se
+        # guarda, y para qué sirve (poder demostrar el tratamiento).
+        self.assertIn("METADATOS", descripcion)
+        self.assertIn("NO se guarda", descripcion)
+        self.assertIn("licitud", descripcion)
+        self.assertIn("hash", descripcion.lower())
+        self.assertEqual(por_nombre["crm_envios_ia"]["inputSchema"]["type"], "object")
 
 
 if __name__ == "__main__":

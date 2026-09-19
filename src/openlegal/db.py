@@ -398,6 +398,132 @@ def _migracion_6_honorarios_gastos_pagos(db: DB) -> list[str]:
     return aplicadas
 
 
+def _migracion_7_envios_de_ia_de_cualquier_origen(db: DB) -> list[str]:
+    """Migración 7: el registro de IA deja de ser sólo del CRM.
+
+    Hasta acá `transferencias_ia` guardaba lo que salía **por el CRM**: el aparato de
+    autorización, minimización y registro existía, pero sólo actuaba cuando el envío pasaba
+    por `ia.redactar` o por las herramientas `crm_ia_*`. El harness (dsh) y cualquier otra
+    herramienta hablan DIRECTO con el proveedor del modelo, y por ahí no quedaba registro de
+    nada. El proxy local (`ia_proxy.py`) cierra ese hueco apuntándole el base_url, y para
+    eso el registro necesita tres cosas:
+
+    - `causa_id` deja de ser obligatorio: un envío del harness puede no pertenecer a ninguna
+      causa (una consulta suelta, un texto que no es de un expediente). Antes de esta
+      migración eso no se podía ni anotar. **En SQLite no hay `ALTER COLUMN ... DROP NOT NULL`**:
+      hay que recrear la tabla, copiar las filas, borrar la vieja y renombrar la nueva. Por eso
+      la migración pregunta primero si el NOT NULL sigue ahí (una base al día no se toca dos
+      veces) y por eso está la prueba `test_la_migracion_7_rehace_la_tabla_sin_perder_nada`.
+    - `origen`: de dónde salió el envío ('crm' | 'proxy' | 'otro'). Es lo que después permite
+      saber si el registro lo escribió el CRM o un herramienta que alguien apuntó al proxy.
+    - `via` (por ejemplo 'openai-compat' o 'anthropic-compat'), `bloqueado` y `motivo_bloqueo`:
+      los envíos que el proxy NO reenvió también son parte del registro —el intento es justamente
+      lo que hay que poder demostrar— y necesitan dónde decir por qué se negaron.
+    - `estudio_id`: un envío sin causa no se puede atribuir a un estudio a través de `causas`,
+      y el panel tiene que poder mostrarlo sin servir datos de otro estudio. Se completa con el
+      de la causa cuando la hay, y queda nulo cuando no se puede saber (se dice, no se inventa).
+    """
+    if "transferencias_ia" not in db.tablas():
+        return []
+    aplicadas: list[str] = []
+    for columna, definicion in (
+        ("origen", "TEXT NOT NULL DEFAULT 'crm'"),
+        ("via", "TEXT"),
+        ("bloqueado", "INTEGER NOT NULL DEFAULT 0"),
+        ("motivo_bloqueo", "TEXT"),
+        ("estudio_id", "INTEGER REFERENCES estudios(id) ON DELETE SET NULL"),
+    ):
+        if columna not in db.columnas("transferencias_ia"):
+            db.ejecutar(f"ALTER TABLE transferencias_ia ADD COLUMN {columna} {definicion}")
+            aplicadas.append(f"ALTER transferencias_ia.{columna}")
+
+    if _causa_id_es_obligatoria(db):
+        if db.dialecto == "sqlite":
+            _rehacer_transferencias_sin_causa_obligatoria(db)
+            aplicadas.append("transferencias_ia recreada: causa_id admite nulo")
+        else:
+            db.ejecutar("ALTER TABLE transferencias_ia ALTER COLUMN causa_id DROP NOT NULL")
+            aplicadas.append("ALTER transferencias_ia.causa_id DROP NOT NULL")
+
+    # Los envíos que ya estaban se pueden atribuir por su causa. Los que no tienen causa
+    # quedan sin estudio: es lo honesto, no se le adjudican al primero de la lista.
+    db.ejecutar(
+        "UPDATE transferencias_ia SET estudio_id = "
+        "(SELECT estudio_id FROM causas WHERE causas.id = transferencias_ia.causa_id) "
+        "WHERE estudio_id IS NULL AND causa_id IS NOT NULL"
+    )
+    return aplicadas
+
+
+#: Las columnas de `transferencias_ia`, en el orden del esquema. Se listan acá porque la
+#: recreación de la tabla (migración 7) copia con nombres explícitos: un `SELECT *` entre
+#: dos versiones distintas de la misma tabla es exactamente cómo se pierden datos en silencio.
+COLUMNAS_TRANSFERENCIAS = (
+    "id", "causa_id", "autorizacion_id", "usuario_id", "proveedor", "modelo", "destino_pais",
+    "documentos", "caracteres", "hash_payload", "redactado", "creado_en", "origen", "via",
+    "bloqueado", "motivo_bloqueo", "estudio_id",
+)
+
+
+def _causa_id_es_obligatoria(db: DB) -> bool:
+    """¿`transferencias_ia.causa_id` sigue siendo NOT NULL? Se pregunta, no se supone."""
+    if db.dialecto == "sqlite":
+        return any(
+            fila["name"] == "causa_id" and bool(fila["notnull"])
+            for fila in db.todos("PRAGMA table_info(transferencias_ia)")
+        )
+    fila = db.uno(
+        "SELECT is_nullable FROM information_schema.columns "
+        "WHERE table_name = ? AND column_name = ?",
+        ("transferencias_ia", "causa_id"),
+    )
+    if not fila:
+        return False
+    return str(fila["is_nullable"]) == "NO"
+
+
+def _rehacer_transferencias_sin_causa_obligatoria(db: DB) -> None:
+    """Recrea `transferencias_ia` para que `causa_id` admita nulo (SQLite, migración 7).
+
+    El procedimiento es el que recomienda SQLite para cambiar la definición de una tabla:
+    crear la nueva, copiar las filas por nombre de columna, borrar la vieja y renombrar.
+    Nada referencia a `transferencias_ia`, así que no hay que reescribir claves ajenas; el
+    índice se vuelve a crear porque se va con la tabla. Si algo falla a mitad de camino queda
+    la tabla `transferencias_ia_nueva` con los datos ya copiados y **la vieja intacta**, que es
+    la única forma de que un fallo acá no borre el registro de lo que ya salió del estudio.
+    """
+    columnas = ", ".join(COLUMNAS_TRANSFERENCIAS)
+    db.ejecutar("DROP TABLE IF EXISTS transferencias_ia_nueva")
+    db.ejecutar(
+        "CREATE TABLE transferencias_ia_nueva ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " causa_id INTEGER REFERENCES causas(id) ON DELETE CASCADE,"
+        " autorizacion_id INTEGER REFERENCES autorizaciones_ia(id) ON DELETE SET NULL,"
+        " usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,"
+        " proveedor TEXT NOT NULL,"
+        " modelo TEXT,"
+        " destino_pais TEXT,"
+        " documentos TEXT,"
+        " caracteres INTEGER NOT NULL DEFAULT 0,"
+        " hash_payload TEXT NOT NULL,"
+        " redactado INTEGER NOT NULL DEFAULT 0,"
+        " creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        " origen TEXT NOT NULL DEFAULT 'crm',"
+        " via TEXT,"
+        " bloqueado INTEGER NOT NULL DEFAULT 0,"
+        " motivo_bloqueo TEXT,"
+        " estudio_id INTEGER REFERENCES estudios(id) ON DELETE SET NULL)"
+    )
+    db.ejecutar(
+        f"INSERT INTO transferencias_ia_nueva ({columnas}) SELECT {columnas} FROM transferencias_ia"
+    )
+    db.ejecutar("DROP TABLE transferencias_ia")
+    db.ejecutar("ALTER TABLE transferencias_ia_nueva RENAME TO transferencias_ia")
+    db.ejecutar(
+        "CREATE INDEX IF NOT EXISTS idx_transferencias_causa ON transferencias_ia (causa_id, creado_en)"
+    )
+
+
 MIGRACIONES: list[tuple[int, str, Callable[[DB], list[str]]]] = [
     (1, "esquema_base", _migracion_1_esquema_base),
     (2, "documentos_integridad", _migracion_2_documentos_integridad),
@@ -405,4 +531,5 @@ MIGRACIONES: list[tuple[int, str, Callable[[DB], list[str]]]] = [
     (4, "retencion", _migracion_4_retencion),
     (5, "notificaciones", _migracion_5_notificaciones),
     (6, "honorarios_gastos_pagos", _migracion_6_honorarios_gastos_pagos),
+    (7, "envios_de_ia_de_cualquier_origen", _migracion_7_envios_de_ia_de_cualquier_origen),
 ]

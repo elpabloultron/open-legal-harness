@@ -22,6 +22,17 @@ if curl -s -o /dev/null "http://127.0.0.1:$PUERTO/"; then
     echo "el harness ya está escuchando en el puerto $PUERTO"
 else
     echo "levantando el harness (perfil $PERFIL, puerto $PUERTO)…"
+    # El modelo no habla directo con el proveedor: pasa por el proxy local del CRM, que avisa
+    # y registra cada uso de IA (proveedor, modelo, país, caracteres y hash — nunca el
+    # contenido). Si el proxy no está levantado, el harness lo dice al primer mensaje; se
+    # arranca con `openlegal ia-proxy`. Para desactivarlo, quitá esta línea.
+    # El modelo no habla directo con el proveedor: pasa por el proxy local del CRM, que avisa
+    # y registra cada uso de IA (proveedor, modelo, país, caracteres y hash — nunca el
+    # contenido). Va SIN /v1: dsh usa el protocolo `messages` y le agrega /v1/messages él
+    # mismo; con /v1 quedaría /v1/v1/messages. El proxy se arranca con `openlegal ia-proxy`;
+    # para desactivar el paso, comentá esta línea.
+    export DEEPSEEK_BASE_URL="${DEEPSEEK_BASE_URL:-http://127.0.0.1:8790}"
+    echo "  los pedidos al modelo pasan por el proxy de IA: $DEEPSEEK_BASE_URL"
     # setsid: el harness no tiene que morir cuando se cierra esta terminal ni la sesión que
     # lo lanzó (es un servicio de la oficina, no un comando de paso).
     setsid dsh --profile "$PERFIL" --no-open --host 127.0.0.1 --port "$PUERTO" \

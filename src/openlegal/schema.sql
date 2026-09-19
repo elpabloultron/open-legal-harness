@@ -186,9 +186,17 @@ CREATE TABLE IF NOT EXISTS autorizaciones_ia (
 
 -- Registro de comunicaciones: que se mando, a quien, cuando y con que hash.
 -- Es la evidencia que permite demostrar el tratamiento ante el titular o la Agencia.
+--
+-- `causa_id` admite nulo a proposito (migracion 7): no todo uso de IA es de una causa. El
+-- harness y cualquier otra herramienta pueden mandar una consulta suelta al modelo, y ese
+-- envio tiene que poder registrarse igual — con la causa vacia y `origen` diciendo de donde
+-- salio ('crm' cuando lo registro el CRM, 'proxy' cuando paso por el proxy local, 'otro' el
+-- resto). `bloqueado` y `motivo_bloqueo` guardan lo que NO se reenvio: el intento tambien es
+-- parte de lo que hay que poder demostrar. `estudio_id` es para los envios sin causa, que no
+-- se pueden atribuir a un estudio a traves de `causas`.
 CREATE TABLE IF NOT EXISTS transferencias_ia (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    causa_id        INTEGER NOT NULL REFERENCES causas(id) ON DELETE CASCADE,
+    causa_id        INTEGER REFERENCES causas(id) ON DELETE CASCADE,
     autorizacion_id INTEGER REFERENCES autorizaciones_ia(id) ON DELETE SET NULL,
     usuario_id      INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
     proveedor       TEXT NOT NULL,
@@ -198,7 +206,12 @@ CREATE TABLE IF NOT EXISTS transferencias_ia (
     caracteres      INTEGER NOT NULL DEFAULT 0,
     hash_payload    TEXT NOT NULL,
     redactado       INTEGER NOT NULL DEFAULT 0,
-    creado_en       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    creado_en       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    origen          TEXT NOT NULL DEFAULT 'crm',      -- crm|proxy|otro
+    via             TEXT,                             -- por ejemplo openai-compat | anthropic-compat
+    bloqueado       INTEGER NOT NULL DEFAULT 0,
+    motivo_bloqueo  TEXT,
+    estudio_id      INTEGER REFERENCES estudios(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_plazos_vencimiento ON plazos (fecha_vencimiento, estado);

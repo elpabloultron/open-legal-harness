@@ -19,7 +19,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from openlegal import auth, seguridad, service  # noqa: E402
+from openlegal import auth, ia_proxy, seguridad, service  # noqa: E402
 from openlegal.db import DB  # noqa: E402
 
 # El núcleo del CRM es sólo librería estándar: la suite tiene que correr igual sin los extras
@@ -458,6 +458,143 @@ class TestModulosDelDia(BasePanel):
         panel = self.cliente_http.get("/api/panel").json()
         self.assertIn("causas_por_estado", panel)
         self.assertIn("plazos_pendientes", panel)
+
+
+class TestModuloIA(BasePanel):
+    """El registro de IA en el panel: metadatos, bloqueos y la clave que no sale nunca.
+
+    Es la pantalla que existe porque el aparato legal del CRM no alcanzaba: el harness habla
+    DIRECTO con el proveedor del modelo y por ahí no quedaba registro de nada. Acá se prueba
+    que lo que sí queda registrado (lo que pasó por el proxy) se ve desde el navegador, con el
+    permiso que corresponde y sin que la api_key del proveedor viaje al cliente.
+    """
+
+    CLAVE = "clave-del-proveedor-que-no-sale-nunca"
+
+    def setUp(self):
+        super().setUp()
+        self.ia_config = self.raiz / "ia_proxy.json"
+        self._ia_previa = os.environ.get("OPENLEGAL_IA_PROXY_CONFIG")
+        os.environ["OPENLEGAL_IA_PROXY_CONFIG"] = str(self.ia_config)
+        ia_proxy.guardar_config({
+            "proveedor": "deepseek",
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": self.CLAVE,
+            "puerto": 8790,
+            "minimizar": True,
+            "avisar_escritorio": False,
+        })
+
+    def tearDown(self):
+        if self._ia_previa is None:
+            os.environ.pop("OPENLEGAL_IA_PROXY_CONFIG", None)
+        else:
+            os.environ["OPENLEGAL_IA_PROXY_CONFIG"] = self._ia_previa
+        super().tearDown()
+
+    def _envio(self, texto: str = "contenido del expediente", **extra) -> dict:
+        """Deja un envío en el registro como lo haría el proxy (no hay usuario: es el proceso)."""
+        db = self.db()
+        try:
+            return ia_proxy.registrar(
+                db, proveedor="deepseek", modelo="deepseek-chat", destino_pais="China",
+                texto=texto, causa_id=self.causa, estudio_id=self.estudio, **extra,
+            )
+        finally:
+            db.cerrar()
+
+    def test_muestra_los_envios_con_sus_metadatos_y_sin_el_contenido(self):
+        secreto = "el actor confesó el 3 de marzo y ofreció pagar"
+        self._envio(secreto)
+
+        respuesta = self.cliente_http.get("/api/ia")
+
+        self.assertEqual(respuesta.status_code, 200)
+        datos = respuesta.json()
+        self.assertEqual(len(datos["envios"]), 1)
+        envio = datos["envios"][0]
+        self.assertEqual(envio["proveedor"], "deepseek")
+        self.assertEqual(envio["modelo"], "deepseek-chat")
+        self.assertEqual(envio["destino_pais"], "China")
+        self.assertEqual(envio["caracteres"], len(secreto))
+        self.assertEqual(envio["causa_id"], self.causa)
+        self.assertEqual(envio["origen"], "proxy")
+        # El contenido no se guarda: no está en la base ni, por lo tanto, en la respuesta.
+        self.assertNotIn(secreto, respuesta.text)
+        self.assertIn("no se guarda", datos["aviso"])
+
+    def test_los_envios_bloqueados_llegan_con_su_motivo(self):
+        self._envio("esto no se autorizó", bloqueado=True, motivo_bloqueo="la causa 1 no tiene autorización vigente de IA")
+
+        datos = self.cliente_http.get("/api/ia").json()
+
+        self.assertEqual(len(datos["bloqueados"]), 1)
+        self.assertEqual(datos["bloqueados"][0]["bloqueado"], 1)
+        self.assertIn("no tiene autorización", datos["bloqueados"][0]["motivo_bloqueo"])
+
+    def test_el_estado_del_proxy_dice_la_direccion_y_nunca_la_clave(self):
+        respuesta = self.cliente_http.get("/api/ia")
+
+        proxy = respuesta.json()["proxy"]
+        self.assertEqual(proxy["url"], "http://127.0.0.1:8790/v1")
+        # La del harness: el proxy a secas, porque el adaptador del protocolo `messages` le agrega
+        # `/v1/messages` él mismo (con `/v1` o `/anthropic` la URL saldría mal armada).
+        self.assertEqual(proxy["url_anthropic"], "http://127.0.0.1:8790")
+        self.assertNotIn("/v1", proxy["url_anthropic"])
+        self.assertNotIn("/anthropic", proxy["url_anthropic"])
+        self.assertEqual(proxy["proveedor"], "deepseek")
+        self.assertEqual(proxy["api_key"], "configurada")
+        # En la máquina del estudio lo normal es que el proxy esté corriendo, y entonces este
+        # puerto SÍ tiene a alguien escuchando: no se puede afirmar que esté apagado (la prueba
+        # del estado no depende de lo que esté levantado en la máquina de quien la corre).
+        if ia_proxy.activo(proxy["puerto"]):
+            self.skipTest("hay un proxy escuchando en ese puerto: no se puede afirmar que no haya nadie")
+        self.assertFalse(proxy["activo"], "en la prueba nadie está escuchando en ese puerto")
+        self.assertNotIn(self.CLAVE, respuesta.text)
+
+    def test_las_autorizaciones_por_causa_se_listan(self):
+        db = self.db()
+        try:
+            service.autorizar_ia(db, self.socio_fila, self.causa, titular="Lucía Herrera")
+        finally:
+            db.cerrar()
+
+        datos = self.cliente_http.get("/api/ia").json()
+
+        self.assertEqual(len(datos["autorizaciones"]), 1)
+        self.assertEqual(datos["autorizaciones"][0]["titular"], "Lucía Herrera")
+        self.assertEqual(datos["autorizaciones"][0]["vigente"], 1)
+        self.assertEqual(datos["autorizaciones"][0]["causa_id"], self.causa)
+
+    def test_se_puede_acotar_a_una_causa(self):
+        otra = service.crear_causa(self.db(), self.socio_fila, "Otra causa")
+        self._envio("de la primera")
+        db = self.db()
+        try:
+            ia_proxy.registrar(
+                db, proveedor="deepseek", modelo="deepseek-chat", destino_pais="China",
+                texto="de la segunda", causa_id=otra, estudio_id=self.estudio,
+            )
+        finally:
+            db.cerrar()
+
+        datos = self.cliente_http.get(f"/api/ia?causa={self.causa}").json()
+
+        self.assertEqual(len(datos["envios"]), 1)
+        self.assertEqual(datos["envios"][0]["causa_id"], self.causa)
+
+    def test_quien_no_puede_leer_ia_no_entra(self):
+        carla = self.entrar("carla@test.cl", "clave-larga-3")
+        try:
+            self.assertEqual(carla.get("/api/ia").status_code, 403)
+        finally:
+            carla.close()
+
+    def test_el_modulo_es_de_solo_lectura(self):
+        # El panel no borra ni edita el registro: un registro de comunicaciones editable no
+        # prueba nada. Cualquier método que no sea GET se rechaza en la ruta.
+        respuesta = self.cliente_http.post("/api/ia", json={})
+        self.assertIn(respuesta.status_code, (404, 405))
 
 
 if __name__ == "__main__":
