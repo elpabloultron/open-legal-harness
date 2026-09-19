@@ -952,7 +952,10 @@ class ServidorIA(ThreadingHTTPServer):
     """El servidor del proxy: su configuración, su base y su avisador."""
 
     daemon_threads = True
-    allow_reuse_address = True
+    # En Linux/BSD SO_REUSEADDR sirve para reiniciar rápido sobre un puerto en TIME_WAIT.
+    # En Windows significa otra cosa: deja tomar un puerto que OTRO proceso ya está usando,
+    # así que el proxy arrancaría encima del CRM sin decir nada. Ahí no se pide.
+    allow_reuse_address = os.name != "nt"
 
     def __init__(self, direccion: tuple[str, int], config: dict, base_de_datos: str | None = None):
         super().__init__(direccion, _Manejador)

@@ -683,7 +683,8 @@ class TestConfiguracionYArranque(BaseProxy):
     def test_la_configuracion_se_guarda_con_permisos_600(self):
         ia_proxy.guardar_config({"puerto": 8795, "proveedor": "openai"})
         ruta = pathlib.Path(os.environ["OPENLEGAL_IA_PROXY_CONFIG"])
-        self.assertEqual(ruta.stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":  # en Windows los permisos son otra cosa (no hay 0o600 real)
+            self.assertEqual(ruta.stat().st_mode & 0o777, 0o600)
         cargada = ia_proxy.cargar_config()
         self.assertEqual(cargada["puerto"], 8795)
         self.assertEqual(cargada["proveedor"], "openai")
