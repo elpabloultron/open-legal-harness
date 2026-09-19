@@ -263,7 +263,10 @@ openlegal --db "$DB" usuario desactivar --email luis@estudio.cl   # corta el acc
 
 ## Los módulos del panel
 
-Todo se hace por la interfaz: la terminal queda para quien la prefiera, no como requisito.
+La interfaz es **React + React-Admin** (en `panel/`), sobre la misma API local. Todo se hace
+por la pantalla: la terminal queda para quien la prefiera, no como requisito. El panel
+compilado se sirve en `/`; el panel anterior, en JavaScript a mano, sigue disponible en
+`/clasico` como salida de emergencia mientras se termina la migración.
 
 | Módulo | Qué se hace ahí |
 |---|---|

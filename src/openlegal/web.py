@@ -57,6 +57,7 @@ from collections.abc import Iterator
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, auth, notificaciones, plazos, retencion, seguridad, service, titulares
@@ -283,6 +284,23 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
     # ----------------------------------------------------------------- panel
+    # El panel nuevo (React + React-Admin) se compila a static/app y se sirve desde ahí.
+    # Si no está compilado —un clon recién bajado, por ejemplo— queda el panel clásico: el
+    # CRM nunca se queda sin interfaz, y el clásico sigue accesible en /clasico mientras se
+    # termina la migración.
+    APP_COMPILADO = ESTATICOS / "app"
+    if (APP_COMPILADO / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=APP_COMPILADO / "assets"), name="panel-assets")
+
+    def abrir_panel(archivo: pathlib.Path, token: str | None) -> HTMLResponse:
+        html = HTMLResponse(archivo.read_text(encoding="utf-8"))
+        if token_valido(token):
+            # La cookie tiene que ponerse sobre la respuesta que se devuelve: si se
+            # pone en el objeto `Response` inyectado y además se retorna otra
+            # respuesta, Starlette descarta las cabeceras de la inyectada.
+            html.set_cookie(COOKIE_TOKEN, token, httponly=True, samesite="strict")
+        return html
+
     @app.get("/", response_class=HTMLResponse)
     def panel(
         respuesta: Response,
@@ -292,13 +310,17 @@ def crear_app(db_url: str | None = None, token: str | None = None) -> FastAPI:
         """El HTML es estático y no lleva datos: se sirve siempre. Los datos quedan
         detrás de la API, que sí exige sesión o token. Así la secretaria puede
         abrir la página y entrar con su correo."""
-        html = HTMLResponse((ESTATICOS / "panel.html").read_text(encoding="utf-8"))
-        if token_valido(token):
-            # La cookie tiene que ponerse sobre la respuesta que se devuelve: si se
-            # pone en el objeto `Response` inyectado y además se retorna otra
-            # respuesta, Starlette descarta las cabeceras de la inyectada.
-            html.set_cookie(COOKIE_TOKEN, token, httponly=True, samesite="strict")
-        return html
+        nuevo = APP_COMPILADO / "index.html"
+        return abrir_panel(nuevo if nuevo.is_file() else ESTATICOS / "panel.html", token)
+
+    @app.get("/clasico", response_class=HTMLResponse)
+    def panel_clasico(
+        respuesta: Response,
+        token: str | None = Query(default=None),
+        cookie_token: str | None = Cookie(default=None, alias=COOKIE_TOKEN),
+    ):
+        """El panel anterior, en JavaScript a mano. Queda como salida de emergencia."""
+        return abrir_panel(ESTATICOS / "panel.html", token)
 
     @app.get("/panel.css")
     def css():

@@ -130,13 +130,27 @@ class TestLaConexionYLosHilos(BasePanel):
 
 
 class TestPanelSeSirve(BasePanel):
-    def test_el_html_trae_los_modulos(self):
-        respuesta = self.cliente_http.get("/")
-        self.assertEqual(respuesta.status_code, 200)
-        for vista in ("avisos", "usuarios", "seguridad", "retencion", "datos"):
-            self.assertIn(f'data-vista="{vista}"', respuesta.text)
+    def test_la_raiz_sirve_el_panel_nuevo_y_el_clasico_sigue_en_su_ruta(self):
+        raiz = self.cliente_http.get("/")
+        self.assertEqual(raiz.status_code, 200)
+        # El panel compilado (React + React-Admin) se sirve desde static/app.
+        self.assertIn('id="raiz"', raiz.text)
+        self.assertIn("/assets/", raiz.text)
 
-    def test_el_js_y_el_css_se_sirven(self):
+        clasico = self.cliente_http.get("/clasico")
+        self.assertEqual(clasico.status_code, 200)
+        for vista in ("avisos", "usuarios", "seguridad", "retencion", "datos"):
+            self.assertIn(f'data-vista="{vista}"', clasico.text)
+
+    def test_el_activo_compilado_se_sirve(self):
+        raiz = self.cliente_http.get("/")
+        activo = raiz.text.split('src="', 1)[1].split('"', 1)[0]
+        respuesta = self.cliente_http.get(activo)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIn("javascript", respuesta.headers["content-type"])
+        self.assertGreater(len(respuesta.content), 100_000)
+
+    def test_el_js_y_el_css_del_clasico_se_sirven(self):
         self.assertIn("application/javascript", self.cliente_http.get("/panel.js").headers["content-type"])
         self.assertIn("text/css", self.cliente_http.get("/panel.css").headers["content-type"])
 

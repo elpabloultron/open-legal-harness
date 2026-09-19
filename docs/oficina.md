@@ -84,6 +84,25 @@ las llevaba, que es justamente lo que hay que poder probar.
 
 ## 4. Antes de que lo use el equipo: seguridad
 
+### El panel en la red, con certificado
+
+El panel en la oficina queda accesible desde los otros equipos. Por HTTP, las contraseñas y
+los expedientes viajan en claro dentro de la red: se cierra con un certificado propio.
+
+```bash
+bash scripts/certificado_local.sh                       # usa la IP de este equipo
+bash scripts/instalar_oficina.sh --db "$DB" --cert "$HOME/.openlegal/tls/panel.crt" \
+                                 --key "$HOME/.openlegal/tls/panel.key"
+```
+
+Los otros equipos entran en `https://192.168.x.x:8899/`. El navegador va a avisar que el
+certificado no es de confianza **la primera vez en cada equipo**: es lo esperado en un
+certificado propio de la oficina (no hay un dominio público de por medio), se acepta una vez
+y queda cifrado lo que circula. Conviene que el estudio sepa por qué ese aviso es normal.
+
+Si el certificado vence (825 días por defecto), se vuelve a generar con el mismo comando y se
+reinstala: el navegador lo pide aceptar de nuevo.
+
 1. **Segundo factor (TOTP) en socio y administrador.** Es la diferencia entre una contraseña
    filtrada y una contraseña filtrada que no sirve de nada:
    ```bash

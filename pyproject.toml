@@ -32,7 +32,15 @@ package-dir = { "" = "src" }
 include-package-data = true
 
 [tool.setuptools.package-data]
-openlegal = ["schema.sql", "feriados_cl.json", "static/*.html", "static/*.css", "static/*.js"]
+openlegal = [
+  "schema.sql",
+  "feriados_cl.json",
+  "static/*.html",
+  "static/*.css",
+  "static/*.js",
+  "static/app/*",
+  "static/app/assets/*",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

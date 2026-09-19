@@ -20,3 +20,8 @@ node_modules
 # sistemas operativos
 .DS_Store
 Thumbs.db
+
+# panel (React + React-Admin): se versiona el código y el resultado compilado,
+# no las dependencias ni la caché del empaquetador
+panel/.vite/
+panel/coverage/

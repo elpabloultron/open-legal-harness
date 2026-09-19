@@ -467,12 +467,37 @@ def cmd_serve(args) -> None:
     from .web import crear_app
 
     app = crear_app(getattr(args, "db", None), args.token)
-    url = f"http://{args.host}:{args.port}/?token={app.state.token}"
+    certificado = getattr(args, "cert", None)
+    clave_cert = getattr(args, "key", None) or certificado
+    esquema = "https" if certificado else "http"
+    url = f"{esquema}://{args.host}:{args.port}/?token={app.state.token}"
+
     print("\nOpen Legal Harness — CRM Jurídico en marcha")
     print(f"  panel:  {url}")
     print(f"  base:   {app.state.db_url or '(por defecto)'}")
+    if certificado:
+        # En la oficina el panel queda en la red local: sin certificado, las contraseñas
+        # viajan en claro entre los equipos. El certificado no hace falta que sea de una
+        # autoridad: alcanza con que sea el mismo en todos los equipos y que el navegador
+        # lo acepte una vez (scripts/certificado_local.sh lo genera).
+        print(f"  TLS:    {certificado}")
+        print("  (si el navegador avisa que el certificado no es de confianza: es el esperado")
+        print("   en un certificado propio; se acepta una vez por equipo)")
+    else:
+        print("  aviso: sin certificado el panel va en HTTP. Si lo van a usar desde otros")
+        print("         equipos, generá uno con scripts/certificado_local.sh y pasalo con --cert")
     print("  el token es local; el servicio solo escucha en el host indicado\n")
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+
+    # `uvicorn.run` tiene una firma enorme y acá sólo se usan cuatro cosas: el diccionario
+    # se arma según haya certificado o no, y se le pasa sin más.
+    opciones: dict[str, object] = {"host": args.host, "port": args.port, "log_level": "warning"}
+    if certificado:
+        for etiqueta, ruta in (("certificado", certificado), ("clave del certificado", clave_cert)):
+            if not pathlib.Path(str(ruta)).is_file():
+                salida_error(f"no encuentro el {etiqueta} {ruta}")
+        opciones["ssl_certfile"] = str(certificado)
+        opciones["ssl_keyfile"] = str(clave_cert)
+    uvicorn.run(app, **opciones)
 
 
 def cmd_titular_exportar(args) -> None:
@@ -962,6 +987,8 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1", help="host de escucha (por defecto solo local)")
     p.add_argument("--port", type=int, default=8899)
     p.add_argument("--token", help="token del panel; si se omite se genera uno")
+    p.add_argument("--cert", help="certificado TLS (PEM). Con esto el panel va en HTTPS")
+    p.add_argument("--key", help="clave del certificado, si está en otro archivo")
     p.set_defaults(func=cmd_serve)
     return parser
 

@@ -154,3 +154,31 @@ jobs:
         run: python -m unittest tests.test_panel -q
       - name: El panel de verdad (servidor real, HTTP y cookies)
         run: python scripts/prueba_panel.py
+
+  panel:
+    name: el panel (React + React-Admin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: pnpm
+        run: npm install --global pnpm@10
+      - name: Dependencias del panel (con el lockfile, reproducible)
+        working-directory: panel
+        run: pnpm install --frozen-lockfile
+      - name: Pruebas del panel
+        working-directory: panel
+        run: pnpm run test
+      - name: Compilar (y verificar los tipos)
+        working-directory: panel
+        run: pnpm run build
+      - name: El panel compilado del repositorio tiene que estar al dia
+        run: |
+          if ! git diff --quiet -- src/openlegal/static/app; then
+            echo "el panel compilado no coincide con el codigo: compilalo y commitea el resultado"
+            git --no-pager diff --stat -- src/openlegal/static/app
+            exit 1
+          fi
+          echo "el panel commiteado coincide con su codigo"

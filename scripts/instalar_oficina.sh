@@ -16,6 +16,8 @@ BASE="sqlite://${HOME}/.openlegal/estudio.db"
 SOLO_GENERAR=0
 CON_AVISOS=1
 CON_RESPALDO=1
+CERT=""
+CLAVE_CERT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -25,6 +27,8 @@ while [ $# -gt 0 ]; do
     --solo-generar) SOLO_GENERAR=1; shift ;;
     --sin-avisos) CON_AVISOS=0; shift ;;
     --sin-respaldo) CON_RESPALDO=0; shift ;;
+    --cert) CERT="$2"; shift 2 ;;
+    --key) CLAVE_CERT="$2"; shift 2 ;;
     -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "opción desconocida: $1" >&2; exit 2 ;;
   esac
@@ -71,12 +75,14 @@ escribir() {  # nombre, contenido
 }
 
 # ------------------------------------------------------------------------ el panel
+TLS=""
+[ -n "$CERT" ] && TLS=" --cert ${CERT}" && [ -n "$CLAVE_CERT" ] && TLS="${TLS} --key ${CLAVE_CERT}"
 escribir "openlegal-panel.service" "[Unit]
 Description=CRM jurídico (panel del estudio)
 After=network-online.target
 [Service]
 Type=simple
-ExecStart=${OPENLEGAL} --db ${BASE} serve --host ${HOST} --port ${PUERTO}
+ExecStart=${OPENLEGAL} --db ${BASE} serve --host ${HOST} --port ${PUERTO}${TLS}
 Restart=on-failure
 RestartSec=5
 [Install]
@@ -136,9 +142,15 @@ IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || true)"
 [ -z "$IP" ] && IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
 
 echo
+ESQUEMA="http"
+[ -n "$CERT" ] && ESQUEMA="https"
 echo "=== listo: este equipo es el del estudio ==="
-echo "  en este equipo:  http://127.0.0.1:${PUERTO}/"
-[ -n "$IP" ] && echo "  para los otros:  http://${IP}:${PUERTO}/    ← esta es la dirección que se les da"
+echo "  en este equipo:  ${ESQUEMA}://127.0.0.1:${PUERTO}/"
+[ -n "$IP" ] && echo "  para los otros:  ${ESQUEMA}://${IP}:${PUERTO}/    ← esta es la dirección que se les da"
+if [ "$ESQUEMA" = "http" ]; then
+  echo "  aviso: sin certificado (--cert) el panel va en HTTP y las contraseñas viajan en claro"
+  echo "         por la red de la oficina. Generá uno con scripts/certificado_local.sh"
+fi
 echo "  cada persona entra con su correo y su contraseña: cada uno ve lo suyo y todo queda"
 echo "  firmado en la bitácora."
 echo

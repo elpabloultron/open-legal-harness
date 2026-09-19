@@ -112,12 +112,15 @@ def entrar(email: str, clave: str):
 
 # ------------------------------------------------------------------- la página
 print("\n=== la interfaz se sirve ===")
-codigo, html, cabeceras = pedir("/")
-check(codigo == 200 and "data-vista=\"avisos\"" in html, "el HTML trae los módulos")
-codigo, js, _ = pedir("/panel.js")
-check(codigo == 200 and "vistas" in js, "el JavaScript se sirve")
+codigo, html, _ = pedir("/")
+check(codigo == 200 and 'id="raiz"' in html and "/assets/" in html, "el panel nuevo (React) se sirve en /")
+activo = html.split('src="', 1)[1].split('"', 1)[0] if 'src="' in html else ""
+codigo, js, _ = pedir(activo)
+check(codigo == 200 and len(js) > 100_000, f"el paquete compilado del panel se sirve ({activo})")
+codigo, clasico, _ = pedir("/clasico")
+check(codigo == 200 and 'data-vista="avisos"' in clasico, "el panel clásico sigue disponible en /clasico")
 codigo, css, _ = pedir("/panel.css")
-check(codigo == 200 and ".rejilla" in css, "el CSS se sirve")
+check(codigo == 200 and ".rejilla" in css, "el CSS del clásico también")
 
 codigo, _, _ = pedir("/api/avisos")
 check(codigo == 401, "sin sesión, los datos no se entregan (401)")
