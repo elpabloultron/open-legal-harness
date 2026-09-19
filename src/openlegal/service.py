@@ -259,7 +259,11 @@ def crear_audiencia(
             "responsable_id": extra.get("responsable_id"),
         },
     )
-    auth.auditar(db, usuario["estudio_id"], usuario["id"], "audiencia.crear", "audiencias", audiencia_id)
+    cuando = f"{tipo} del {fecha} {hora or ''}".strip()
+    auth.auditar(
+        db, usuario["estudio_id"], usuario["id"], "audiencia.crear", "audiencias", audiencia_id,
+        f"{cuando} (causa {causa_id})",
+    )
     notificaciones.avisar_asignacion(
         db, usuario, "audiencia", audiencia_id, f"{tipo} del {fecha}",
         causa_id=causa_id, responsable_id=extra.get("responsable_id"),

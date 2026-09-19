@@ -75,22 +75,10 @@ PATRON_TELEFONO = re.compile(r"\b(?:\+?56)?\s?9\s?\d{4}\s?\d{4}\b")
 
 
 def _rut_valido(rut: str) -> bool:
-    """Módulo 11, igual que `rut_validar_chile` de open-legal-chile.
+    """Módulo 11. La implementación vive en `seguridad.rut_valido`, para tenerla una sola vez."""
+    from .seguridad import rut_valido
 
-    La secuencia de multiplicadores es 2,3,4,5,6,7 y vuelve a 2 (no a 3): con el
-    reinicio mal puesto, todo RUT de cuerpo de 8 dígitos se rechazaba.
-    """
-    limpio = re.sub(r"[.\-]", "", rut).upper()
-    if len(limpio) < 2 or not limpio[:-1].isdigit():
-        return False
-    suma = 0
-    factor = 2
-    for digito in reversed(limpio[:-1]):
-        suma += int(digito) * factor
-        factor = 2 if factor == 7 else factor + 1
-    resto = 11 - (suma % 11)
-    esperado = "0" if resto == 11 else ("K" if resto == 10 else str(resto))
-    return limpio[-1] == esperado
+    return rut_valido(rut)
 
 
 def redactar(

@@ -554,3 +554,105 @@ class TestAudienciaRectificable(BaseMCP):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestElAgenteCargaLaCausaCompleta(BaseMCP):
+    """El escenario que pidió el estudio: dictarle la causa al agente y que la cargue.
+
+    Hasta hace poco el agente podía cargar plazos y audiencias, pero no crear el cliente ni
+    la causa: el alta había que hacerla a mano. Estas pruebas fijan ese camino, que es el
+    que hace que la frase «tengo esta causa 00001, ingresá los datos» funcione de verdad.
+    """
+
+    def test_busca_antes_de_crear_para_no_duplicar(self):
+        datos, error = self.llamar("crm_cliente_buscar", texto="Andes")
+        self.assertFalse(error)
+        self.assertEqual(datos["total"], 1)
+        self.assertEqual(datos["clientes"][0]["nombre"], "Constructora Andes SpA")
+        self.assertTrue(datos["clientes"][0]["rut_valido"])
+
+    def test_crea_el_cliente_con_sus_datos_y_su_estudio(self):
+        datos, error = self.llamar(
+            "crm_cliente_crear", nombre="Lucía Herrera Vargas", rut="11.111.111-1",
+            email="lucia@ejemplo.cl", telefono="+56 9 8765 4321", direccion="Providencia 1234",
+        )
+        self.assertFalse(error)
+        self.assertIsNone(datos["aviso"])
+        fila = self.db.uno("SELECT * FROM clientes WHERE id = ?", (datos["cliente_id"],))
+        self.assertEqual(fila["telefono"], "+56 9 8765 4321")
+        self.assertEqual(fila["estudio_id"], self.estudio)
+
+    def test_avisa_si_el_rut_no_cuadra_pero_lo_guarda_igual(self):
+        datos, error = self.llamar("crm_cliente_crear", nombre="Cliente con RUT raro", rut="12.345.678-0")
+        self.assertFalse(error)
+        self.assertIn("no cuadra", datos["aviso"])
+        self.assertIsNotNone(
+            self.db.uno("SELECT id FROM clientes WHERE id = ?", (datos["cliente_id"],))
+        )
+
+    def test_una_persona_juridica_sin_representante_no_se_acepta(self):
+        datos, error = self.llamar("crm_cliente_crear", nombre="SpA Sin Nadie", tipo_persona="juridica")
+        self.assertTrue(error)
+        self.assertIn("representante_legal", datos)
+
+    def test_carga_la_causa_los_plazos_la_audiencia_y_despues_la_lee(self):
+        cliente, _ = self.llamar("crm_cliente_crear", nombre="Lucía Herrera", rut="11.111.111-1")
+        causa, error = self.llamar(
+            "crm_causa_crear", caratula="Herrera con Fondo del Norte",
+            cliente_id=cliente["cliente_id"], rol_rit="C-00001-2026",
+            tribunal="1° Juzgado Civil de Santiago", materia="civil", cuantia_clp=12500000,
+        )
+        self.assertFalse(error)
+        self.assertIn("Art. 66", causa["siguiente_paso"])
+
+        plazo, error = self.llamar(
+            "crm_plazo_crear", causa_id=causa["causa_id"], descripcion="Contestar traslado",
+            dias=10, notificacion="2026-09-15",
+        )
+        self.assertFalse(error)
+        self.assertEqual(plazo["fecha_vencimiento"], "2026-09-29")  # 18 y 19 de septiembre son feriados
+
+        _, error = self.llamar(
+            "crm_audiencia_crear", causa_id=causa["causa_id"], tipo="Audiencia preparatoria",
+            fecha="2026-10-05", hora="09:00", modalidad="presencial",
+        )
+        self.assertFalse(error)
+
+        agenda, error = self.llamar("crm_agenda", dias=3650)
+        self.assertFalse(error)
+        self.assertEqual(agenda["total"], 1)
+        self.assertEqual(agenda["audiencias"][0]["rol_rit"], "C-00001-2026")
+
+        lectura, error = self.llamar("crm_causa_leer", causa_id=causa["causa_id"])
+        self.assertFalse(error)
+        self.assertEqual(len(lectura["plazos"]), 1)
+        self.assertEqual(len(lectura["audiencias"]), 1)
+        self.assertEqual(lectura["causa"]["cliente_id"], cliente["cliente_id"])
+
+    def test_el_agente_no_crea_clientes_si_su_rol_no_puede(self):
+        auth.crear_usuario(self.db, self.estudio, "Paula Paralegal", "paula@mcp.cl", "paralegal", "clave")
+        contexto = self.contexto_extra("paula@mcp.cl")
+        solicitud = {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "crm_cliente_crear", "arguments": {"nombre": "No Puede"}},
+        }
+        resultado = responder(solicitud, contexto)["result"]
+        self.assertTrue(resultado["isError"])
+        self.assertIn("permiso", resultado["content"][0]["text"])
+        self.assertIsNone(
+            self.db.uno("SELECT id FROM clientes WHERE nombre = ?", ("No Puede",))
+        )
+
+    def test_no_se_cuelga_una_causa_de_un_cliente_de_otro_estudio(self):
+        otro = auth.crear_estudio(self.db, "Otro Estudio", modo="oficina")
+        otro_socio_id = auth.crear_usuario(self.db, otro, "Otro Socio", "otro@mcp.cl", "socio", "clave")
+        otro_socio = self.db.uno("SELECT * FROM usuarios WHERE id = ?", (otro_socio_id,))
+        otro_socio.pop("password_hash", None)
+        ajeno = service.crear_cliente(self.db, otro_socio, "Cliente Ajeno")
+
+        datos, error = self.llamar("crm_causa_crear", caratula="Intento cruzado", cliente_id=ajeno)
+        self.assertTrue(error)
+        self.assertIn("no hay cliente", datos)
+        self.assertIsNone(
+            self.db.uno("SELECT id FROM causas WHERE caratula = ?", ("Intento cruzado",))
+        )

@@ -71,7 +71,7 @@ enchufa el CRM por sus puntos de extensión públicos.
 | 1. `dsh` instalado y sirviendo la UI | ✅ verificado (`npm install -g --allow-scripts=... @deepseek-ai/dsh`, `dsh web --port 8799`) |
 | 2. CRM local servido por `openlegal serve` | ✅ verificado (106 pruebas, datos reales en SQLite y PostgreSQL) |
 | 3. Fila «CRM Jurídico» bajo *New session* + su panel | ✅ verificado en la GUI real (ver abajo) |
-| 4. MCP: las 18 herramientas del CRM + las 69 de open-legal-chile | ✅ verificado por stdio y en vivo (el perfil arranca los dos servidores) |
+| 4. MCP: las 21 herramientas del CRM + las 69 de open-legal-chile | ✅ verificado por stdio y en vivo (el perfil arranca los dos servidores) |
 | 5. Perfil `legal` con las cuatro piezas y la marca propia | ✅ verificado (`--dump-config` las muestra; lo monta `scripts/montar_en_dsh.sh`) |
 
 ### Montarlo en un paso (`scripts/montar_en_dsh.sh`)
@@ -185,11 +185,21 @@ el perfil se crea desde la plantilla oficial:
 ## MCP: el agente escribe en el CRM
 
 `openlegal mcp` expone el CRM como servidor MCP (JSON-RPC 2.0 sobre stdio, mismo patrón
-que `open-legal-chile`), con 14 herramientas: `crm_causa_buscar`, `crm_causa_leer`,
-`crm_plazo_calcular`, `crm_plazo_crear`, `crm_plazo_listar`, `crm_plazo_cumplido`,
-`crm_plazo_actualizar`, `crm_plazo_cancelar`, `crm_audiencia_crear`,
-`crm_documento_registrar`, `crm_ia_estado`, `crm_ia_redactar`, `crm_ia_registrar` y
-`crm_estudio`.
+que `open-legal-chile`), con 21 herramientas: `crm_estudio`, `crm_cliente_buscar`, `crm_cliente_crear`, `crm_causa_crear`, `crm_agenda`, `crm_causa_buscar`, `crm_causa_leer`, `crm_plazo_calcular`, `crm_plazo_crear`, `crm_plazo_listar`, `crm_plazo_actualizar`, `crm_plazo_cancelar`, `crm_plazo_cumplido`, `crm_audiencia_crear`, `crm_audiencia_actualizar`, `crm_audiencia_cancelar`, `crm_documento_registrar`, `crm_auditoria_leer`, `crm_ia_estado`, `crm_ia_redactar` y
+`crm_ia_registrar`.
+
+**El agente carga una causa completa**: busca el cliente (`crm_cliente_buscar`), lo crea con
+sus datos (`crm_cliente_crear`), abre la causa (`crm_causa_crear`), le carga los plazos
+—el vencimiento lo calcula el CRM con el Art. 66 CPC, no el modelo— y agéndale las
+audiencias, revisando antes la agenda (`crm_agenda`) para no citar a dos partes a la misma
+hora. Todo queda en la bitácora con el usuario que lo pidió.
+
+**Lo que el agente no hace, a propósito**: configurar el correo o el SMS (son credenciales),
+anonimizar o ejecutar la retención de datos (no tienen vuelta atrás) y sacar el expediente de
+un cliente del sistema (es salida de datos personales). Eso se hace desde el panel, con una
+persona apretando el botón. El agente actúa como el usuario que lo invoca: las causas que no
+le corresponden no existen para él.
+
 
 `crm_plazo_actualizar` y `crm_plazo_cancelar` nacieron de la primera prueba con un
 expediente real: el agente detectó un plazo mal cargado y no tenía cómo corregirlo. No

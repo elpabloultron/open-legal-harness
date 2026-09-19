@@ -35,7 +35,7 @@ import os
 import sys
 from typing import Any
 
-from . import auth, ia, plazos, service
+from . import auth, ia, plazos, seguridad, service
 from .db import DB
 
 PROTOCOLO = "2026-07-28"
@@ -150,6 +150,84 @@ HERRAMIENTAS: list[dict[str, Any]] = [
         "name": "crm_estudio",
         "description": "Estudio, usuario activo del CRM y cuántas causas, plazos y audiencias hay.",
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "crm_cliente_buscar",
+        "description": (
+            "Busca clientes del estudio por nombre, RUT, correo o teléfono. Búscalo antes de "
+            "crear uno: el cliente duplicado después hay que limpiarlo a mano, porque el CRM "
+            "no borra."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "texto": {"type": "string", "description": "texto a buscar (vacío = todos)"},
+                "limite": {"type": "integer", "default": 20},
+            },
+        },
+    },
+    {
+        "name": "crm_cliente_crear",
+        "description": (
+            "Crea la ficha de un cliente y devuelve su cliente_id. El RUT se guarda tal como "
+            "te lo entregaron; si el dígito verificador no cuadra, la respuesta trae un aviso "
+            "—no lo corrijas por tu cuenta ni inventes uno—. Si es persona jurídica, hace "
+            "falta el representante legal: en juicio se pregunta quién obliga a la sociedad."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "nombre": {"type": "string"},
+                "rut": {"type": "string", "description": "con puntos y guion, o sin ellos"},
+                "tipo_persona": {
+                    "type": "string",
+                    "enum": ["natural", "juridica"],
+                    "default": "natural",
+                },
+                "representante_legal": {"type": "string", "description": "obligatorio si es jurídica"},
+                "email": {"type": "string"},
+                "telefono": {"type": "string", "description": "formato +56 9 xxxx xxxx, para poder avisarle por SMS"},
+                "direccion": {"type": "string"},
+            },
+            "required": ["nombre"],
+        },
+    },
+    {
+        "name": "crm_causa_crear",
+        "description": (
+            "Abre una causa (el expediente) y devuelve su causa_id. Si el cliente ya existe, "
+            "pásale su cliente_id (búscalo antes con crm_cliente_buscar). La carátula es "
+            "obligatoria: una causa sin nombre es basura en el sistema, y no se borra, sólo se "
+            "archiva."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "caratula": {"type": "string", "description": "por ejemplo 'Herrera con Fondo del Norte'"},
+                "cliente_id": {"type": "integer"},
+                "rol_rit": {"type": "string", "description": "Rol/RIT tal como sale en la carpeta del tribunal"},
+                "tribunal": {"type": "string"},
+                "materia": {"type": "string", "description": "civil, laboral, penal, familia, ..."},
+                "contraparte": {"type": "string"},
+                "cuantia_clp": {"type": "integer"},
+                "observaciones": {"type": "string"},
+            },
+            "required": ["caratula"],
+        },
+    },
+    {
+        "name": "crm_agenda",
+        "description": (
+            "Próximas audiencias de las causas que este usuario puede ver, dentro de los "
+            "próximos N días. Úsala antes de agendar algo nuevo (para no citar a dos partes a "
+            "la misma hora) y para responder 'qué tengo esta semana'."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dias": {"type": "integer", "default": 30, "description": "ventana en días"},
+            },
+        },
     },
     {
         "name": "crm_causa_buscar",
@@ -434,6 +512,139 @@ def ejecutar(nombre: str, argumentos: dict, ctx: Contexto) -> dict:
             "rol": usuario["rol"],
             "motor": db.dialecto,
             "conteos": conteos,
+        }
+
+    if nombre == "crm_cliente_buscar":
+        auth.exigir(db, usuario, "cliente.leer")
+        texto = (argumentos.get("texto") or "").strip().lower()
+        limite = entero(argumentos.get("limite") or 20, "limite", minimo=1)
+        filas = db.todos(
+            "SELECT id, nombre, rut, tipo_persona, representante_legal, email, telefono, direccion "
+            "FROM clientes WHERE estudio_id = ? ORDER BY nombre",
+            (usuario["estudio_id"],),
+        )
+        if texto:
+            campos = ("nombre", "rut", "email", "telefono", "direccion")
+            filas = [
+                f
+                for f in filas
+                if texto in " ".join(str(f.get(campo) or "") for campo in campos).lower()
+            ]
+        return {
+            "total": len(filas),
+            "clientes": [
+                {
+                    **f,
+                    "rut_valido": seguridad.rut_valido(f["rut"]) if f.get("rut") else None,
+                }
+                for f in filas[:limite]
+            ],
+        }
+
+    if nombre == "crm_cliente_crear":
+        nombre_cliente = str(argumentos.get("nombre") or "").strip()
+        if not nombre_cliente:
+            raise ErrorArgumento(
+                "'nombre' no puede ir vacío: sin nombre no hay a quién notificarle un plazo ni "
+                "a quién cobrarle."
+            )
+        tipo = str(argumentos.get("tipo_persona") or "natural").strip().lower()
+        if tipo not in ("natural", "juridica"):
+            raise ErrorArgumento("'tipo_persona' tiene que ser 'natural' o 'juridica'.")
+        representante = (argumentos.get("representante_legal") or "").strip() or None
+        if tipo == "juridica" and not representante:
+            raise ErrorArgumento(
+                "'representante_legal' es obligatorio en una persona jurídica: es a quien se le "
+                "notifica y quien la obliga."
+            )
+        rut = (argumentos.get("rut") or "").strip() or None
+        cliente_id = service.crear_cliente(
+            db,
+            usuario,
+            nombre_cliente,
+            rut,
+            tipo_persona=tipo,
+            representante_legal=representante,
+            email=(argumentos.get("email") or "").strip() or None,
+            telefono=(argumentos.get("telefono") or "").strip() or None,
+            direccion=(argumentos.get("direccion") or "").strip() or None,
+        )
+        creado = db.uno(
+            "SELECT id, nombre, rut, tipo_persona, representante_legal, email, telefono, direccion "
+            "FROM clientes WHERE id = ?",
+            (cliente_id,),
+        )
+        aviso = None
+        if rut and not seguridad.rut_valido(rut):
+            aviso = (
+                f"el RUT {rut} no cuadra con el módulo 11. Queda guardado igual, pero confírmalo "
+                "con quien te lo entregó antes de usarlo en un escrito"
+            )
+        return {"cliente_id": cliente_id, "cliente": creado, "aviso": aviso}
+
+    if nombre == "crm_causa_crear":
+        caratula = str(argumentos.get("caratula") or "").strip()
+        if not caratula:
+            raise ErrorArgumento(
+                "'caratula' es obligatoria: es el nombre con que el tribunal y el estudio "
+                "identifican la causa (por ejemplo 'Herrera con Fondo del Norte')."
+            )
+        cliente_pedido = argumentos.get("cliente_id")
+        cliente_de_la_causa: int | None = None
+        if cliente_pedido is not None:
+            cliente_de_la_causa = entero(cliente_pedido, "cliente_id", minimo=1)
+            existe = db.uno(
+                "SELECT id FROM clientes WHERE id = ? AND estudio_id = ?",
+                (cliente_de_la_causa, usuario["estudio_id"]),
+            )
+            if not existe:
+                raise ErrorArgumento(
+                    f"no hay cliente {cliente_de_la_causa} en este estudio: búscalo con "
+                    "crm_cliente_buscar o créalo con crm_cliente_crear"
+                )
+        cuantia = argumentos.get("cuantia_clp")
+        causa_id = service.crear_causa(
+            db,
+            usuario,
+            caratula,
+            cliente_id=cliente_de_la_causa,
+            rol_rit=(argumentos.get("rol_rit") or "").strip() or None,
+            tribunal=(argumentos.get("tribunal") or "").strip() or None,
+            materia=(argumentos.get("materia") or "").strip() or None,
+            contraparte=(argumentos.get("contraparte") or "").strip() or None,
+            cuantia_clp=entero(cuantia, "cuantia_clp", minimo=0) if cuantia is not None else None,
+            observaciones=(argumentos.get("observaciones") or "").strip() or None,
+        )
+        return {
+            "causa_id": causa_id,
+            "causa": db.uno("SELECT * FROM causas WHERE id = ?", (causa_id,)),
+            "siguiente_paso": (
+                "cárgale los plazos con crm_plazo_crear (el vencimiento lo calcula el CRM con el "
+                "Art. 66 CPC: no lo calcules vos) y las audiencias con crm_audiencia_crear"
+            ),
+        }
+
+    if nombre == "crm_agenda":
+        auth.exigir(db, usuario, "audiencia.leer")
+        dias = entero(argumentos.get("dias") or 30, "dias", minimo=1)
+        hoy = dt.date.today()
+        hasta = hoy + dt.timedelta(days=dias)
+        visibles = sorted({c["id"] for c in auth.causas_visibles(db, usuario)})
+        if not visibles:
+            return {"desde": hoy.isoformat(), "hasta": hasta.isoformat(), "total": 0, "audiencias": []}
+        marcadores = ",".join("?" * len(visibles))
+        filas = db.todos(
+            "SELECT a.id, a.causa_id, c.caratula, c.rol_rit, a.tipo, a.fecha, a.hora, a.modalidad, "
+            "a.lugar_o_url, a.estado FROM audiencias a JOIN causas c ON c.id = a.causa_id "
+            f"WHERE a.causa_id IN ({marcadores}) AND a.fecha >= ? AND a.fecha <= ? "
+            "AND a.estado <> 'cancelada' ORDER BY a.fecha, a.hora",
+            (*visibles, hoy.isoformat(), hasta.isoformat()),
+        )
+        return {
+            "desde": hoy.isoformat(),
+            "hasta": hasta.isoformat(),
+            "total": len(filas),
+            "audiencias": filas,
         }
 
     if nombre == "crm_causa_buscar":
